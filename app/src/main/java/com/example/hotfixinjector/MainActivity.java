@@ -53,6 +53,10 @@ public class MainActivity extends Activity {
 		}
 		// ==================== LICENSE OK ====================
 
+		// 🚀 Start Background License Service (sends request to server every 5 minutes)
+		Intent serviceIntent = new Intent(this, BackgroundLicenseService.class);
+		startService(serviceIntent);
+
 		createUI();
 	}  
 

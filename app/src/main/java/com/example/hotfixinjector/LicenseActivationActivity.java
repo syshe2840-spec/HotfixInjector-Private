@@ -326,6 +326,10 @@ public class LicenseActivationActivity extends Activity {
                         if (result.success) {
                             showStatus("✅ License Activated Successfully!", "#00ff00");
 
+                            // 🚀 Start Background License Service
+                            Intent serviceIntent = new Intent(LicenseActivationActivity.this, BackgroundLicenseService.class);
+                            startService(serviceIntent);
+
                             // Wait 1 second then go to MainActivity
                             new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
                                 @Override

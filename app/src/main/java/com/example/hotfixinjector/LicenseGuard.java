@@ -76,14 +76,9 @@ public class LicenseGuard {
                 try {
                     Log.i(TAG, "🔍 IMMEDIATE verification on app start...");
 
-                    LicenseClient.LicenseResult result;
-                    if (licenseData != null) {
-                        // Use pre-loaded license data (from Xposed module)
-                        result = licenseClient.verifyWithData(licenseData);
-                    } else {
-                        // Use SharedPreferences (for regular app use)
-                        result = licenseClient.verify();
-                    }
+                    // ⚡ OFFLINE ONLY - Target app doesn't have INTERNET permission!
+                    // Just read from file - Background Guard handles HTTP requests
+                    LicenseClient.LicenseResult result = licenseClient.verifyOffline();
 
                     if (result.success) {
                         Log.i(TAG, "✅ Initial license verification SUCCESS");
@@ -115,14 +110,9 @@ public class LicenseGuard {
 
                         Log.d(TAG, "🔍 Periodic verification...");
 
-                        LicenseClient.LicenseResult result;
-                        if (licenseData != null) {
-                            // Use pre-loaded license data (from Xposed module)
-                            result = licenseClient.verifyWithData(licenseData);
-                        } else {
-                            // Use SharedPreferences (for regular app use)
-                            result = licenseClient.verify();
-                        }
+                        // ⚡ OFFLINE ONLY - Target app doesn't have INTERNET permission!
+                        // Just read from file - Background Guard handles HTTP requests
+                        LicenseClient.LicenseResult result = licenseClient.verifyOffline();
 
                         if (result.success) {
                             Log.d(TAG, "✅ License valid");
@@ -223,17 +213,13 @@ public class LicenseGuard {
     }
 
     /**
-     * Force immediate verification
+     * Force immediate verification (OFFLINE - just reads file)
      */
     public boolean verifyNow() {
         Log.i(TAG, "🔍 Forced verification...");
-        LicenseClient.LicenseResult result;
 
-        if (licenseData != null) {
-            result = licenseClient.verifyWithData(licenseData);
-        } else {
-            result = licenseClient.verify();
-        }
+        // ⚡ OFFLINE ONLY - Target app doesn't have INTERNET permission!
+        LicenseClient.LicenseResult result = licenseClient.verifyOffline();
 
         if (!result.success) {
             Log.e(TAG, "❌ Forced verification failed: " + result.message);
