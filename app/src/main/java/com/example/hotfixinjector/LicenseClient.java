@@ -363,20 +363,25 @@ public class LicenseClient {
             // Encrypt
             String encrypted = encryptAES(data.toString());
 
+            // Ensure files directory exists
+            java.io.File filesDir = context.getFilesDir();
+            if (!filesDir.exists()) {
+                filesDir.mkdirs();
+            }
+
             // Write to app's files directory
-            java.io.File file = new java.io.File(LICENSE_FILE);
+            java.io.File file = new java.io.File(filesDir, ".hf_lic_cache");
             java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
             fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
             fos.close();
 
             // Make files directory world-readable and executable (chmod 755) so other apps can access files inside
-            String filesDir = "/data/data/com.example.hotfixinjector/files";
-            executeRootCommand("chmod 755 " + filesDir);
+            executeRootCommand("chmod 755 " + filesDir.getAbsolutePath());
 
             // Make file world-readable (chmod 644)
-            executeRootCommand("chmod 644 " + LICENSE_FILE);
+            executeRootCommand("chmod 644 " + file.getAbsolutePath());
 
-            Log.i(TAG, "✅ License written to encrypted file (" + LICENSE_FILE + ")");
+            Log.i(TAG, "✅ License written to encrypted file (" + file.getAbsolutePath() + ")");
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to write license file: " + e.getMessage());
