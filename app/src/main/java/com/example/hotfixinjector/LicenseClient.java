@@ -191,24 +191,34 @@ public class LicenseClient {
 
             if (json.getBoolean("success")) {
                 String sessionToken = json.getString("session_token");
-                String nonce = json.getString("nonce");  // ⚡ NEW: Get nonce from server
+                String nonce = json.getString("nonce");  // ⚡ Get nonce from server
                 long expiresAt = json.optLong("expires_at", 0);
+                long createdAt = json.optLong("created_at", System.currentTimeMillis());  // ⚡ NEW
+                long serverTime = json.optLong("server_time", System.currentTimeMillis()); // ⚡ NEW
 
                 Log.i(TAG, "🔑 [ACTIVATE] Received nonce from server");
                 Log.d(TAG, "🔑 [ACTIVATE] Nonce length: " + nonce.length());
+                Log.i(TAG, "⏰ [ACTIVATE] Server time: " + serverTime);
+                Log.i(TAG, "⏰ [ACTIVATE] Created at: " + createdAt);
+                Log.i(TAG, "⏰ [ACTIVATE] Expires at: " + expiresAt);
 
-                // Save credentials (including license_key and nonce)
+                long clientTime = System.currentTimeMillis();
+
+                // Save credentials (including license_key, nonce, and server times)
                 prefs.edit()
                     .putString("license_key", licenseKey)
                     .putString(KEY_SESSION_TOKEN, sessionToken)
-                    .putString("nonce", nonce)  // ⚡ NEW: Store nonce
+                    .putString("nonce", nonce)
                     .putLong(KEY_EXPIRES_AT, expiresAt)
+                    .putLong("created_at", createdAt)         // ⚡ NEW
+                    .putLong("last_server_time", serverTime)  // ⚡ NEW
+                    .putLong("last_check_client", clientTime) // ⚡ NEW
                     .apply();
 
                 // Write to encrypted file for cross-app access
                 writeLicenseToFile();
 
-                Log.i(TAG, "✅ License activated successfully with nonce");
+                Log.i(TAG, "✅ License activated successfully with nonce and server time sync");
                 return LicenseResult.success("License activated");
             } else {
                 String error = json.optString("error", "Unknown error");
@@ -248,6 +258,16 @@ public class LicenseClient {
                 Log.e(TAG, "[VERIFY-OFFLINE] 🔥 License is BURNED");
                 clearLicense();
                 return LicenseResult.failure("License burned");
+            }
+
+            // ⚡ CHECK EXPIRATION: Using estimated server time (not client time!)
+            if (license.isExpiredByServerTime()) {
+                long estimatedServerTime = license.getEstimatedServerTime();
+                Log.e(TAG, "[VERIFY-OFFLINE] ⏰ LICENSE EXPIRED!");
+                Log.e(TAG, "[VERIFY-OFFLINE] Estimated server time: " + estimatedServerTime);
+                Log.e(TAG, "[VERIFY-OFFLINE] Expires at: " + license.expiresAt);
+                clearLicense();
+                return LicenseResult.failure("License expired");
             }
 
             if ("valid".equals(license.status)) {
@@ -318,13 +338,17 @@ public class LicenseClient {
 
             String newStatus = "invalid";
             String newNonce = null;
+            long serverTime = 0;
 
             if (json.getBoolean("success") && json.optBoolean("valid", false)) {
                 newStatus = "valid";
-                newNonce = json.getString("nonce");  // ⚡ NEW: Get new nonce from server
+                newNonce = json.getString("nonce");  // ⚡ Get new nonce from server
+                serverTime = json.optLong("server_time", System.currentTimeMillis()); // ⚡ NEW
+
                 Log.i(TAG, "[VERIFY] ✅ Server verification SUCCESS");
                 Log.i(TAG, "[VERIFY] 🔑 Received new nonce from server");
                 Log.d(TAG, "[VERIFY] New nonce length: " + newNonce.length());
+                Log.i(TAG, "[VERIFY] ⏰ Server time: " + serverTime);
             } else {
                 String error = json.optString("error", "");
                 // Check if server says it's burned
@@ -336,8 +360,8 @@ public class LicenseClient {
                 }
             }
 
-            // 4. Update file with new status, timestamp, and nonce (ALWAYS!)
-            updateLicenseStatus(newStatus, newNonce);
+            // 4. Update file with new status, nonce, and server time (ALWAYS!)
+            updateLicenseStatus(newStatus, newNonce, serverTime);
 
             // If burned, delete file
             if ("burned".equals(newStatus)) {
@@ -399,11 +423,14 @@ public class LicenseClient {
     /**
      * Update license status in file (after online verification)
      */
-    private void updateLicenseStatus(String newStatus, String newNonce) {
+    private void updateLicenseStatus(String newStatus, String newNonce, long serverTime) {
         try {
             Log.i(TAG, "[UPDATE] Updating license status to: " + newStatus);
             if (newNonce != null) {
                 Log.i(TAG, "[UPDATE] Updating nonce (length: " + newNonce.length() + ")");
+            }
+            if (serverTime > 0) {
+                Log.i(TAG, "[UPDATE] Updating server time: " + serverTime);
             }
 
             // Read current file
@@ -416,19 +443,34 @@ public class LicenseClient {
             // Use new nonce if provided, otherwise keep old nonce
             String nonceToSave = (newNonce != null) ? newNonce : oldLicense.nonce;
 
+            // Use new server time if provided, otherwise keep old
+            long serverTimeToSave = (serverTime > 0) ? serverTime : oldLicense.lastServerTime;
+
+            long clientTime = System.currentTimeMillis();
+
             // Create updated JSON
             JSONObject data = new JSONObject();
             data.put("license_key", oldLicense.licenseKey);
             data.put("token", oldLicense.sessionToken);
-            data.put("nonce", nonceToSave);  // ⚡ NEW: Save nonce
+            data.put("nonce", nonceToSave);
             data.put("status", newStatus);
-            data.put("last_check", System.currentTimeMillis());
+            data.put("last_check", clientTime);              // ⚡ Client time
+            data.put("last_server_time", serverTimeToSave);  // ⚡ Server time
+            data.put("created_at", oldLicense.createdAt);
             data.put("expires", oldLicense.expiresAt);
             data.put("device", oldLicense.deviceId);
 
-            // Also update SharedPreferences with new nonce
-            if (prefs != null && newNonce != null) {
-                prefs.edit().putString("nonce", newNonce).apply();
+            // Also update SharedPreferences
+            if (prefs != null) {
+                SharedPreferences.Editor editor = prefs.edit();
+                if (newNonce != null) {
+                    editor.putString("nonce", newNonce);
+                }
+                if (serverTime > 0) {
+                    editor.putLong("last_server_time", serverTime);
+                    editor.putLong("last_check_client", clientTime);
+                }
+                editor.apply();
             }
 
             // Encrypt and write
@@ -495,8 +537,11 @@ public class LicenseClient {
             }
 
             String sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
-            String nonce = prefs.getString("nonce", null);  // ⚡ NEW: Get nonce
+            String nonce = prefs.getString("nonce", null);
             long expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0);
+            long createdAt = prefs.getLong("created_at", System.currentTimeMillis());
+            long lastServerTime = prefs.getLong("last_server_time", System.currentTimeMillis());
+            long lastCheckClient = prefs.getLong("last_check_client", System.currentTimeMillis());
 
             if (sessionToken == null) {
                 return;
@@ -506,14 +551,16 @@ public class LicenseClient {
                 Log.w(TAG, "[WRITE] ⚠️ Nonce is missing! This may cause verification to fail.");
             }
 
-            // Create JSON with license data (NEW FORMAT with nonce)
+            // Create JSON with license data (NEW FORMAT with server time sync)
             JSONObject data = new JSONObject();
             data.put("license_key", prefs.getString("license_key", ""));
             data.put("token", sessionToken);
-            data.put("nonce", nonce != null ? nonce : "");  // ⚡ NEW: Store nonce
+            data.put("nonce", nonce != null ? nonce : "");
             data.put("status", "valid");
-            data.put("last_check", System.currentTimeMillis());
-            data.put("expires", expiresAt);
+            data.put("last_check", lastCheckClient);              // ⚡ Client time at last check
+            data.put("last_server_time", lastServerTime);         // ⚡ Server time at last check
+            data.put("created_at", createdAt);                    // ⚡ Creation time (server)
+            data.put("expires", expiresAt);                       // ⚡ Expiration time (server)
             data.put("device", getDeviceId());
 
             // Encrypt
@@ -649,24 +696,29 @@ public class LicenseClient {
 
             Log.i("LicenseClient", "[READ] Decryption successful");
 
-            // Parse JSON (NEW FORMAT with nonce, status and last_check)
+            // Parse JSON (NEW FORMAT with nonce, server time sync)
             JSONObject json = new JSONObject(decrypted);
             String licenseKey = json.optString("license_key", "");
             String token = json.getString("token");
-            String nonce = json.optString("nonce", null);  // ⚡ NEW: Read nonce
+            String nonce = json.optString("nonce", null);
             String status = json.optString("status", "valid");
-            long lastCheck = json.optLong("last_check", 0);
-            long expires = json.getLong("expires");
+            long lastCheck = json.optLong("last_check", System.currentTimeMillis());
+            long lastServerTime = json.optLong("last_server_time", System.currentTimeMillis());
+            long createdAt = json.optLong("created_at", 0);
+            long expires = json.optLong("expires", 0);
             String device = json.getString("device");
 
             Log.i("LicenseClient", "[READ] License parsed:");
             Log.i("LicenseClient", "[READ]   - token: " + token.substring(0, Math.min(20, token.length())) + "...");
             Log.i("LicenseClient", "[READ]   - nonce: " + (nonce != null ? "YES (" + nonce.length() + " chars)" : "MISSING"));
             Log.i("LicenseClient", "[READ]   - status: " + status);
-            Log.i("LicenseClient", "[READ]   - last_check: " + lastCheck);
+            Log.i("LicenseClient", "[READ]   - last_check (client): " + lastCheck);
+            Log.i("LicenseClient", "[READ]   - last_server_time: " + lastServerTime);
+            Log.i("LicenseClient", "[READ]   - created_at: " + createdAt);
             Log.i("LicenseClient", "[READ]   - expires: " + expires);
 
-            LicenseData licenseData = new LicenseData(licenseKey, token, nonce, status, lastCheck, expires, device);
+            LicenseData licenseData = new LicenseData(licenseKey, token, nonce, status,
+                lastCheck, lastServerTime, createdAt, expires, device);
 
             if (!licenseData.isValid()) {
                 Log.e("LicenseClient", "[READ] License data is INVALID (expired or empty token)");
@@ -770,16 +822,21 @@ public class LicenseClient {
         public final String sessionToken;      // Session token from server
         public final String nonce;             // One-time use token (updated after each verification)
         public final String status;            // "valid" | "invalid" | "burned"
-        public final long lastCheck;           // Last online verification timestamp
-        public final long expiresAt;
+        public final long lastCheck;           // Last online verification timestamp (CLIENT time)
+        public final long lastServerTime;      // Server time at last sync (SERVER time)
+        public final long createdAt;           // When license was created (SERVER time)
+        public final long expiresAt;           // When license expires (SERVER time, 0 = never)
         public final String deviceId;
 
-        public LicenseData(String licenseKey, String sessionToken, String nonce, String status, long lastCheck, long expiresAt, String deviceId) {
+        public LicenseData(String licenseKey, String sessionToken, String nonce, String status,
+                          long lastCheck, long lastServerTime, long createdAt, long expiresAt, String deviceId) {
             this.licenseKey = licenseKey;
             this.sessionToken = sessionToken;
             this.nonce = nonce;
             this.status = status;
             this.lastCheck = lastCheck;
+            this.lastServerTime = lastServerTime;
+            this.createdAt = createdAt;
             this.expiresAt = expiresAt;
             this.deviceId = deviceId;
         }
@@ -791,8 +848,31 @@ public class LicenseClient {
             this.nonce = null;
             this.status = "valid";
             this.lastCheck = System.currentTimeMillis();
+            this.lastServerTime = System.currentTimeMillis();
+            this.createdAt = System.currentTimeMillis();
             this.expiresAt = expiresAt;
             this.deviceId = deviceId;
+        }
+
+        /**
+         * Calculate estimated server time based on last sync
+         * estimatedServerTime = lastServerTime + (currentClientTime - lastCheckClientTime)
+         */
+        public long getEstimatedServerTime() {
+            long clientNow = System.currentTimeMillis();
+            long elapsedSinceLastSync = clientNow - lastCheck;
+            return lastServerTime + elapsedSinceLastSync;
+        }
+
+        /**
+         * Check if license is expired based on estimated server time
+         */
+        public boolean isExpiredByServerTime() {
+            if (expiresAt == 0) {
+                return false; // No expiration
+            }
+            long estimatedServerTime = getEstimatedServerTime();
+            return estimatedServerTime > expiresAt;
         }
 
         public boolean isValid() {
@@ -808,8 +888,8 @@ public class LicenseClient {
             if (sessionToken == null || sessionToken.isEmpty()) {
                 return false;
             }
-            // Check expiration
-            if (expiresAt > 0 && System.currentTimeMillis() > expiresAt) {
+            // Check expiration using ESTIMATED SERVER TIME (not client time!)
+            if (isExpiredByServerTime()) {
                 return false;
             }
             return true;
@@ -929,22 +1009,13 @@ public class LicenseClient {
             Log.i(TAG, "[HTTP] Encrypted response size: " + responseStr.length() + " bytes");
 
             // ==================== XOR DECRYPTION ====================
-            // Decrypt response with XOR
+            // Decrypt response with XOR (reuse licenseKey and xorKey from above)
             try {
                 JSONObject responseWrapper = new JSONObject(responseStr);
                 if (responseWrapper.has("encrypted")) {
                     String encryptedResponse = responseWrapper.getString("encrypted");
 
-                    // Get license_key for decryption
-                    String licenseKey = payload.optString("license_key", null);
-                    if (licenseKey == null) {
-                        LicenseData license = readLicenseFromFile();
-                        if (license != null) {
-                            licenseKey = license.licenseKey;
-                        }
-                    }
-
-                    String xorKey = generateXORKey(licenseKey);
+                    // Reuse xorKey from encryption step (already calculated)
                     String decryptedResponse = xorDecrypt(encryptedResponse, xorKey);
                     Log.i(TAG, "[HTTP] Decrypted response size: " + decryptedResponse.length() + " bytes");
 

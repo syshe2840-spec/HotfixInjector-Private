@@ -192,12 +192,14 @@ async function handleActivate(request, env) {
       licenseKey
     ).run();
 
-    // 8. Return encrypted response
+    // 8. Return encrypted response with server time
     const response = {
       success: true,
       session_token: sessionToken,
-      nonce: nonce,  // Initial nonce for client
-      expires_at: existing.expires_at || 0
+      nonce: nonce,                    // Initial nonce for client
+      expires_at: existing.expires_at || 0,
+      created_at: existing.created_at, // ⚡ NEW: When license was created
+      server_time: now                 // ⚡ NEW: Current server time
     };
 
     return encryptedResponse(response, xorKey);
@@ -333,11 +335,12 @@ async function handleVerify(request, env) {
 
     console.log('[VERIFY] ✅ SUCCESS - New nonce generated');
 
-    // 10. Return encrypted response with NEW nonce
+    // 10. Return encrypted response with NEW nonce and server time
     const response = {
       success: true,
       valid: true,
-      nonce: newNonce  // NEW nonce for next request
+      nonce: newNonce,    // NEW nonce for next request
+      server_time: now    // ⚡ NEW: Current server time for time sync
     };
 
     return encryptedResponse(response, xorKey);
