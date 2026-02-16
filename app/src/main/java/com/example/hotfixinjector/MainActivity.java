@@ -35,10 +35,25 @@ public class MainActivity extends Activity {
 	private FireParticleView fireView;  
 	private Handler handler = new Handler();  
 
-	@Override  
-	protected void onCreate(Bundle savedInstanceState) {  
-		super.onCreate(savedInstanceState);  
-		createUI();  
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+		// ==================== LICENSE CHECK ====================
+		// Check if license is activated before showing main UI
+		LicenseClient licenseClient = new LicenseClient(this);
+
+		if (!licenseClient.isLicenseActive()) {
+			// No license! Redirect to activation screen
+			Intent intent = new Intent(this, LicenseActivationActivity.class);
+			intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+			startActivity(intent);
+			finish();
+			return;
+		}
+		// ==================== LICENSE OK ====================
+
+		createUI();
 	}  
 
 	@Override  

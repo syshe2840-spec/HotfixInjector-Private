@@ -53,7 +53,7 @@ public class LicenseClient {
     }
 
     /**
-     * Get unique device ID
+     * Get unique device ID based on REAL hardware (cannot be faked by Device ID Changer)
      */
     public String getDeviceId() {
         if (cachedDeviceId != null) {
@@ -62,20 +62,54 @@ public class LicenseClient {
 
         String deviceId = prefs.getString(KEY_DEVICE_ID, null);
         if (deviceId == null) {
-            // Generate unique device ID
+            // Generate unique device ID using REAL hardware info
+            // These CANNOT be changed by Device ID Changer apps!
+            StringBuilder hwInfo = new StringBuilder();
+
+            // Hardware-level identifiers (unchangeable)
+            hwInfo.append(Build.BOARD).append("|");        // Motherboard
+            hwInfo.append(Build.BRAND).append("|");        // Brand
+            hwInfo.append(Build.DEVICE).append("|");       // Device codename
+            hwInfo.append(Build.HARDWARE).append("|");     // Hardware name
+            hwInfo.append(Build.MANUFACTURER).append("|"); // Manufacturer
+            hwInfo.append(Build.MODEL).append("|");        // Model
+            hwInfo.append(Build.PRODUCT).append("|");      // Product name
+            hwInfo.append(Build.SERIAL).append("|");       // Serial number
+
+            // Android ID (as backup)
             String androidId = Settings.Secure.getString(
                 context.getContentResolver(),
                 Settings.Secure.ANDROID_ID
             );
-            String serial = Build.SERIAL;
-            String model = Build.MODEL;
+            hwInfo.append(androidId);
 
-            deviceId = sha256(androidId + serial + model);
+            // Generate SHA-256 hash of all hardware info
+            deviceId = sha256(hwInfo.toString());
+
+            // Save permanently
             prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply();
+
+            Log.i(TAG, "🔑 Generated Hardware-Based Device ID");
         }
 
         cachedDeviceId = deviceId;
         return deviceId;
+    }
+
+    /**
+     * Get copyable device ID for user
+     */
+    public String getCopyableDeviceId() {
+        String id = getDeviceId();
+        // Format: XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX (easier to copy)
+        StringBuilder formatted = new StringBuilder();
+        for (int i = 0; i < id.length(); i++) {
+            if (i > 0 && i % 4 == 0) {
+                formatted.append("-");
+            }
+            formatted.append(id.charAt(i));
+        }
+        return formatted.toString().toUpperCase();
     }
 
     /**

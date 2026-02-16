@@ -162,14 +162,15 @@ public class LicenseActivationActivity extends Activity {
         label.setLetterSpacing(0.1f);
 
         deviceIdText = new TextView(this);
-        deviceIdText.setText(licenseClient.getDeviceId());
-        deviceIdText.setTextSize(13);
+        deviceIdText.setText(licenseClient.getCopyableDeviceId());
+        deviceIdText.setTextSize(11);
         deviceIdText.setTextColor(Color.parseColor("#cccccc"));
         deviceIdText.setPadding(0, 10, 0, 0);
         deviceIdText.setTypeface(Typeface.MONOSPACE);
+        deviceIdText.setTextIsSelectable(true); // Make it copyable!
 
         TextView hint = new TextView(this);
-        hint.setText("(Provide this to get your license)");
+        hint.setText("(Tap to select and copy • Hardware-based ID)");
         hint.setTextSize(12);
         hint.setTextColor(Color.parseColor("#888888"));
         hint.setPadding(0, 5, 0, 0);
