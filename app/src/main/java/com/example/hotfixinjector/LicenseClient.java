@@ -372,22 +372,17 @@ public class LicenseClient {
     }
 
     /**
-     * Read encrypted license from file
+     * Read encrypted license from file (using root if needed)
      */
     public static LicenseData readLicenseFromFile() {
         try {
-            java.io.File file = new java.io.File(LICENSE_FILE);
-            if (!file.exists()) {
+            // Try reading with root first (since file is in /data/adb/)
+            String encrypted = readFileWithRoot(LICENSE_FILE);
+
+            if (encrypted == null || encrypted.isEmpty()) {
+                Log.e("LicenseClient", "Failed to read license file with root");
                 return null;
             }
-
-            // Read file
-            java.io.FileInputStream fis = new java.io.FileInputStream(file);
-            byte[] data = new byte[(int) file.length()];
-            fis.read(data);
-            fis.close();
-
-            String encrypted = new String(data, StandardCharsets.UTF_8);
 
             // Decrypt
             LicenseClient tempClient = new LicenseClient(null);
@@ -403,6 +398,41 @@ public class LicenseClient {
 
         } catch (Exception e) {
             Log.e("LicenseClient", "Failed to read license file: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * Read file content using root (su cat)
+     */
+    private static String readFileWithRoot(String filePath) {
+        try {
+            Process process = Runtime.getRuntime().exec("su");
+            java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
+            os.writeBytes("cat " + filePath + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+
+            // Read output
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream())
+            );
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+
+            process.waitFor();
+            reader.close();
+            os.close();
+
+            String result = output.toString().trim();
+            return result.isEmpty() ? null : result;
+
+        } catch (Exception e) {
+            Log.e("LicenseClient", "Root read failed: " + e.getMessage());
             return null;
         }
     }
