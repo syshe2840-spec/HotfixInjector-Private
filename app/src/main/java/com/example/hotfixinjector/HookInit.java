@@ -281,8 +281,8 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
             // Start License Guard - NO local storage, server-only verification!
             XposedBridge.log(TAG + ": [GUARD] Starting License Guard...");
-            XposedBridge.log(TAG + ": [GUARD] Will verify with server using device ID only");
-            XposedBridge.log(TAG + ": [GUARD] Immediate check + every 5 seconds");
+            XposedBridge.log(TAG + ": [GUARD] Will verify with server every 5 MINUTES");
+            XposedBridge.log(TAG + ": [GUARD] ⚡ STRONG MODE: Crash on first failure!");
             try {
                 LicenseGuard guard = LicenseGuard.getInstance(app, null);
                 guard.startGuard(app);

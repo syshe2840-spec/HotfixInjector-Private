@@ -7,13 +7,13 @@ import android.util.Log;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * License Guard - Continuously verifies license every 5 seconds
- * If verification fails, crashes the target application
+ * License Guard - Continuously verifies license every 5 MINUTES
+ * If verification fails, crashes the target application IMMEDIATELY
  */
 public class LicenseGuard {
 
     private static final String TAG = "LicenseGuard";
-    private static final int VERIFICATION_INTERVAL = 5000; // 5 seconds
+    private static final int VERIFICATION_INTERVAL = 300000; // 5 minutes (300 seconds)
 
     private static LicenseGuard instance;
     private final LicenseClient licenseClient;
@@ -67,10 +67,10 @@ public class LicenseGuard {
         guardThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                Log.i(TAG, "🛡️ License Guard started - verifying immediately then every 5 seconds");
+                Log.i(TAG, "🛡️ License Guard started - verifying every 5 MINUTES");
 
                 int failureCount = 0;
-                final int MAX_FAILURES = 2; // Allow 2 consecutive failures before crash
+                final int MAX_FAILURES = 1; // ⚡ STRONG: Crash on FIRST failure!
 
                 // IMMEDIATE VERIFICATION ON START (no sleep first)
                 try {
@@ -108,7 +108,7 @@ public class LicenseGuard {
                     }
                 }
 
-                // PERIODIC VERIFICATION LOOP (every 5 seconds)
+                // PERIODIC VERIFICATION LOOP (every 5 MINUTES)
                 while (isRunning.get()) {
                     try {
                         Thread.sleep(VERIFICATION_INTERVAL);

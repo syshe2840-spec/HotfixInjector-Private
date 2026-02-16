@@ -217,7 +217,7 @@ public class LicenseClient {
     }
 
     /**
-     * Verify license with server (called every 5 seconds)
+     * Verify license with server (called on app launch + every 5 minutes)
      */
     public LicenseResult verify() {
         try {
