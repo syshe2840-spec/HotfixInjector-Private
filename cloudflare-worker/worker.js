@@ -176,7 +176,7 @@ async function activateLicense(env, body) {
 
   console.log('🔍 Looking up license...');
   const license = await env.DB.prepare(
-    'SELECT * FROM licenses WHERE license_key = ?'
+    'SELECT * FROM licenses WHERE UPPER(license_key) = UPPER(?)'
   ).bind(license_key).first();
 
   if (!license) {
@@ -262,7 +262,7 @@ async function verifyLicense(env, body) {
 
   console.log('🔍 Looking up license for verification...');
   const license = await env.DB.prepare(
-    'SELECT * FROM licenses WHERE license_key = ?'
+    'SELECT * FROM licenses WHERE UPPER(license_key) = UPPER(?)'
   ).bind(tokenData.license_key).first();
 
   if (!license || !license.is_active) {
@@ -305,7 +305,7 @@ async function revokeLicense(env, body) {
 
   console.log('🗑️ Revoking license...');
   await env.DB.prepare(
-    'UPDATE licenses SET is_active = 0 WHERE license_key = ?'
+    'UPDATE licenses SET is_active = 0 WHERE UPPER(license_key) = UPPER(?)'
   ).bind(license_key).run();
 
   console.log('✅ License revoked');

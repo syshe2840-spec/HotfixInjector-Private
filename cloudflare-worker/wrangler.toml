@@ -1,4 +1,4 @@
-name = "hotfix-license-api"
+name = "hotapp"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
@@ -6,7 +6,7 @@ compatibility_date = "2024-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "hotfix_licenses"
-database_id = "YOUR_DATABASE_ID_HERE"  # Replace with actual D1 database ID after creation
+database_id = "301bd5af-e813-431a-a53d-0f84e10b597b"
 
 # Environment variables
 [vars]
