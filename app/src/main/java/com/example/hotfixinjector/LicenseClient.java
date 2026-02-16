@@ -36,8 +36,8 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // Encrypted license file (world-readable location, device-specific encrypted)
-    private static final String LICENSE_FILE = "/data/local/tmp/.hf_lic_cache";
+    // Encrypted license file (in app's directory, made world-readable, device-specific encrypted)
+    private static final String LICENSE_FILE = "/data/data/com.example.hotfixinjector/files/.hf_lic_cache";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
@@ -363,13 +363,17 @@ public class LicenseClient {
             // Encrypt
             String encrypted = encryptAES(data.toString());
 
-            // Write directly to /data/local/tmp/ (world-writable location)
+            // Write to app's files directory
             java.io.File file = new java.io.File(LICENSE_FILE);
             java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
             fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
             fos.close();
 
-            // Make file world-readable (chmod 644) using root
+            // Make files directory world-readable and executable (chmod 755) so other apps can access files inside
+            String filesDir = "/data/data/com.example.hotfixinjector/files";
+            executeRootCommand("chmod 755 " + filesDir);
+
+            // Make file world-readable (chmod 644)
             executeRootCommand("chmod 644 " + LICENSE_FILE);
 
             Log.i(TAG, "✅ License written to encrypted file (" + LICENSE_FILE + ")");
