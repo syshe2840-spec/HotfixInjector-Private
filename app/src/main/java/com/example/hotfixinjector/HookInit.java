@@ -105,13 +105,14 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
                             final boolean[] verificationSuccess = new boolean[1];
                             final String[] errorMessage = new String[1];
 
-                            // Run verification in background thread (avoid NetworkOnMainThreadException)
+                            // Run verification in background thread (OFFLINE - just read file, no HTTP!)
                             new Thread(new Runnable() {
                                 @Override
                                 public void run() {
                                     try {
                                         LicenseClient licenseClient = new LicenseClient(app);
-                                        LicenseClient.LicenseResult result = licenseClient.verify();
+                                        // ⚡ Use OFFLINE verification (fast, no INTERNET permission needed!)
+                                        LicenseClient.LicenseResult result = licenseClient.verifyOffline();
                                         verificationSuccess[0] = result.success;
                                         errorMessage[0] = result.message;
                                     } catch (Exception e) {
@@ -123,11 +124,11 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
                                 }
                             }).start();
 
-                            // Wait for verification to complete (max 15 seconds)
+                            // Wait for verification to complete (max 3 seconds - should be instant!)
                             try {
-                                boolean completed = latch.await(15, java.util.concurrent.TimeUnit.SECONDS);
+                                boolean completed = latch.await(3, java.util.concurrent.TimeUnit.SECONDS);
                                 if (!completed) {
-                                    XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION TIMEOUT (15s)");
+                                    XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION TIMEOUT (3s)");
                                     XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - Verification timeout!");
                                     return;
                                 }

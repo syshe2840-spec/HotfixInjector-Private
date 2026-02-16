@@ -218,12 +218,49 @@ public class LicenseClient {
     }
 
     /**
-     * Verify license with ALWAYS-ONLINE approach (called on app launch + every 5 minutes)
+     * Verify license OFFLINE - Just read file, no HTTP request!
+     * Used by Hook (fast, doesn't need INTERNET permission)
+     */
+    public LicenseResult verifyOffline() {
+        try {
+            Log.i(TAG, "[VERIFY-OFFLINE] Reading cached status from file...");
+
+            LicenseData license = readLicenseFromFile();
+
+            if (license == null) {
+                Log.e(TAG, "[VERIFY-OFFLINE] ❌ No license file");
+                return LicenseResult.failure("No active license");
+            }
+
+            if (license.isBurned()) {
+                Log.e(TAG, "[VERIFY-OFFLINE] 🔥 License is BURNED");
+                clearLicense();
+                return LicenseResult.failure("License burned");
+            }
+
+            if ("valid".equals(license.status)) {
+                long age = (System.currentTimeMillis() - license.lastCheck) / 1000;
+                Log.i(TAG, "[VERIFY-OFFLINE] ✅ Status: VALID (checked " + age + "s ago)");
+                return LicenseResult.success("Valid");
+            } else {
+                Log.e(TAG, "[VERIFY-OFFLINE] ❌ Status: " + license.status);
+                return LicenseResult.failure("Invalid");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "[VERIFY-OFFLINE] ❌ Exception: " + e.getMessage());
+            return LicenseResult.failure("Read error");
+        }
+    }
+
+    /**
+     * Verify license ONLINE - Send HTTP request and update file
+     * Used by Background Guard (needs INTERNET permission)
      *
      * Logic:
      * 1. Read license file
      * 2. Check if burned → delete file, fail
-     * 3. ALWAYS send online request (every time!)
+     * 3. Send HTTP request
      * 4. Update file with new status and timestamp
      */
     public LicenseResult verify() {
