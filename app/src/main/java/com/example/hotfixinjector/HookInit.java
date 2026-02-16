@@ -77,19 +77,23 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                             XposedBridge.log(TAG + ": [CHECK] Checking package: " + pkg);
 
-                            // Simple license check (SharedPreferences only - no network!)
+                            // License check from MODULE context (not target app context!)
                             try {
-                                android.content.SharedPreferences prefs = app.getSharedPreferences("license_prefs", android.content.Context.MODE_PRIVATE);
+                                // Create context for MODULE app (com.example.hotfixinjector) to read its SharedPreferences
+                                Context moduleContext = app.createPackageContext("com.example.hotfixinjector", Context.CONTEXT_IGNORE_SECURITY);
+                                android.content.SharedPreferences prefs = moduleContext.getSharedPreferences("license_prefs", android.content.Context.MODE_PRIVATE);
                                 String sessionToken = prefs.getString("session_token", null);
 
                                 if (sessionToken == null || sessionToken.isEmpty()) {
-                                    XposedBridge.log(TAG + ": ❌ [LICENSE] No active license - INJECTION BLOCKED");
+                                    XposedBridge.log(TAG + ": ❌ [LICENSE] No active license found - INJECTION BLOCKED");
+                                    XposedBridge.log(TAG + ": ℹ️ [LICENSE] Please activate license in HotfixInjector app first");
                                     return;
                                 }
 
-                                XposedBridge.log(TAG + ": ✅ [LICENSE] Local license found - proceeding with injection");
+                                XposedBridge.log(TAG + ": ✅ [LICENSE] Valid license found - proceeding with injection");
                             } catch (Exception licEx) {
-                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] License check failed, but proceeding anyway: " + licEx.getMessage());
+                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] License check failed: " + licEx.getMessage());
+                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Proceeding anyway to avoid breaking injection");
                                 // Continue anyway to avoid breaking injection
                             }
 
@@ -249,11 +253,14 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
             // Start License Guard for 5-second verification
             XposedBridge.log(TAG + ": [GUARD] Starting License Guard (5-second verification)...");
             try {
-                LicenseGuard guard = LicenseGuard.getInstance(app);
+                // Use MODULE context for license operations
+                Context moduleContext = app.createPackageContext("com.example.hotfixinjector", Context.CONTEXT_IGNORE_SECURITY);
+                LicenseGuard guard = LicenseGuard.getInstance(moduleContext);
                 guard.startGuard(app);
                 XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started successfully");
             } catch (Exception guardEx) {
                 XposedBridge.log(TAG + ": ❌ [GUARD] Failed to start guard: " + guardEx.getMessage());
+                XposedBridge.log(guardEx);
             }
 
             XposedBridge.log(TAG + ": ========================================");
