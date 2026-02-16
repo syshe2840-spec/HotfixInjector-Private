@@ -218,18 +218,18 @@ public class LicenseClient {
     }
 
     /**
-     * Verify license with CACHE-FIRST approach (called on app launch + every 5 minutes)
+     * Verify license with ALWAYS-ONLINE approach (called on app launch + every 5 minutes)
      *
      * Logic:
      * 1. Read license file
      * 2. Check if burned → delete file, fail
-     * 3. Check if cache fresh (< 5 min) → use cached status (fast!)
-     * 4. If cache stale (> 5 min) → online verification → update file
+     * 3. ALWAYS send online request (every time!)
+     * 4. Update file with new status and timestamp
      */
     public LicenseResult verify() {
         try {
             Log.i(TAG, "[VERIFY] ========================================");
-            Log.i(TAG, "[VERIFY] Starting CACHE-FIRST verification...");
+            Log.i(TAG, "[VERIFY] Starting ALWAYS-ONLINE verification...");
 
             // 1. Read license from file
             LicenseData license = readLicenseFromFile();
@@ -239,30 +239,16 @@ public class LicenseClient {
                 return LicenseResult.failure("No active license");
             }
 
-            // 2. Check if BURNED
+            // 2. Check if BURNED (from previous check)
             if (license.isBurned()) {
-                Log.e(TAG, "[VERIFY] 🔥 LICENSE IS BURNED!");
+                Log.e(TAG, "[VERIFY] 🔥 LICENSE IS BURNED (cached)!");
                 Log.e(TAG, "[VERIFY] Deleting burned license file...");
                 clearLicense();
                 return LicenseResult.failure("License burned");
             }
 
-            // 3. Check if cache is FRESH (< 5 minutes old)
-            if (license.isCacheFresh()) {
-                long age = (System.currentTimeMillis() - license.lastCheck) / 1000;
-                Log.i(TAG, "[VERIFY] ✅ Cache is FRESH (" + age + "s old)");
-                Log.i(TAG, "[VERIFY] Using cached status: " + license.status);
-
-                if ("valid".equals(license.status)) {
-                    return LicenseResult.success("Valid (cached)");
-                } else {
-                    return LicenseResult.failure("Invalid (cached)");
-                }
-            }
-
-            // 4. Cache is STALE → Online verification
-            Log.i(TAG, "[VERIFY] ⚠️ Cache is STALE (> 5 minutes old)");
-            Log.i(TAG, "[VERIFY] Performing ONLINE verification...");
+            // 3. ALWAYS perform online verification (no cache!)
+            Log.i(TAG, "[VERIFY] Sending request to server...");
 
             JSONObject payload = new JSONObject();
             payload.put("session_token", license.sessionToken);
@@ -274,7 +260,7 @@ public class LicenseClient {
             String newStatus = "invalid";
             if (json.getBoolean("success") && json.optBoolean("valid", false)) {
                 newStatus = "valid";
-                Log.i(TAG, "[VERIFY] ✅ Online verification SUCCESS");
+                Log.i(TAG, "[VERIFY] ✅ Server verification SUCCESS");
             } else {
                 String error = json.optString("error", "");
                 // Check if server says it's burned
@@ -282,11 +268,11 @@ public class LicenseClient {
                     newStatus = "burned";
                     Log.e(TAG, "[VERIFY] 🔥 Server says license is BURNED!");
                 } else {
-                    Log.e(TAG, "[VERIFY] ❌ Online verification FAILED: " + error);
+                    Log.e(TAG, "[VERIFY] ❌ Server verification FAILED: " + error);
                 }
             }
 
-            // Update file with new status and timestamp
+            // 4. Update file with new status and timestamp (ALWAYS!)
             updateLicenseStatus(newStatus);
 
             // If burned, delete file
@@ -296,7 +282,7 @@ public class LicenseClient {
             }
 
             if ("valid".equals(newStatus)) {
-                return LicenseResult.success("Valid (online)");
+                return LicenseResult.success("Valid");
             } else {
                 return LicenseResult.failure("Invalid");
             }
