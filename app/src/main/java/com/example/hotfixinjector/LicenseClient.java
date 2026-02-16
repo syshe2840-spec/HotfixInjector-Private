@@ -412,10 +412,12 @@ public class LicenseClient {
         Process process = Runtime.getRuntime().exec("su");
         java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
 
+        // Make /data/adb directory accessible (755 = rwxr-xr-x)
+        os.writeBytes("chmod 755 /data/adb\n");
         // Copy temp file to root location
         os.writeBytes("cp " + tempFile.getAbsolutePath() + " " + LICENSE_FILE + "\n");
-        // Set permissions so module can read
-        os.writeBytes("chmod 644 " + LICENSE_FILE + "\n");
+        // Set file permissions to world-readable (666 = rw-rw-rw-)
+        os.writeBytes("chmod 666 " + LICENSE_FILE + "\n");
         os.writeBytes("exit\n");
         os.flush();
 
@@ -454,41 +456,37 @@ public class LicenseClient {
         try {
             Log.i("LicenseClient", "[READ] Reading license from ROOT: " + LICENSE_FILE);
 
-            // Read from root using cat command
-            Process process = Runtime.getRuntime().exec("su");
-            java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
-            os.writeBytes("cat " + LICENSE_FILE + "\n");
-            os.writeBytes("exit\n");
-            os.flush();
+            // Read directly WITHOUT su (file has 666 permissions)
+            java.io.File file = new java.io.File(LICENSE_FILE);
 
-            // Read output
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(process.getInputStream())
-            );
-
-            StringBuilder encrypted = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                encrypted.append(line);
-            }
-
-            int exitCode = process.waitFor();
-
-            if (exitCode != 0) {
-                Log.e("LicenseClient", "[READ] ❌ Root command failed with exit code: " + exitCode);
+            if (!file.exists()) {
+                Log.e("LicenseClient", "[READ] ❌ License file doesn't exist");
                 return null;
             }
 
-            if (encrypted.length() == 0) {
-                Log.e("LicenseClient", "[READ] ❌ License file is empty or doesn't exist");
+            if (!file.canRead()) {
+                Log.e("LicenseClient", "[READ] ❌ License file is not readable (permissions issue)");
                 return null;
             }
 
-            Log.i("LicenseClient", "[READ] ✅ License read from root (" + encrypted.length() + " chars)");
+            // Read file directly
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            byte[] data = new byte[(int) file.length()];
+            fis.read(data);
+            fis.close();
+
+            String encrypted = new String(data, StandardCharsets.UTF_8);
+
+            if (encrypted.isEmpty()) {
+                Log.e("LicenseClient", "[READ] ❌ License file is empty");
+                return null;
+            }
+
+            Log.i("LicenseClient", "[READ] ✅ License read successfully (" + encrypted.length() + " chars)");
 
             // Decrypt
             LicenseClient tempClient = new LicenseClient(null);
-            String decrypted = tempClient.decryptAES(encrypted.toString());
+            String decrypted = tempClient.decryptAES(encrypted);
 
             if (decrypted == null || decrypted.isEmpty()) {
                 Log.e("LicenseClient", "[READ] Decryption failed (empty or null)");
