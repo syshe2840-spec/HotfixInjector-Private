@@ -36,8 +36,8 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // Encrypted license file (on external storage, device-specific encrypted)
-    private static final String LICENSE_FILE = "/sdcard/.hf_lic_cache";
+    // Encrypted license file (root-accessible location, device-specific encrypted)
+    private static final String LICENSE_FILE = "/data/adb/.hf_lic_cache";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
@@ -301,7 +301,7 @@ public class LicenseClient {
     }
 
     /**
-     * Write encrypted license to file (world-readable location)
+     * Write encrypted license to file (root-accessible location)
      */
     private void writeLicenseToFile() {
         try {
@@ -327,19 +327,47 @@ public class LicenseClient {
             // Encrypt
             String encrypted = encryptAES(data.toString());
 
-            // Write to file
-            java.io.File file = new java.io.File(LICENSE_FILE);
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+            // Try to write to temporary location first
+            java.io.File tempFile = new java.io.File(context.getCacheDir(), ".hf_lic_tmp");
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile);
             fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
             fos.close();
 
-            // Make world-readable
-            file.setReadable(true, false);
+            // Use root to move to final location and set permissions
+            String[] commands = {
+                "cp " + tempFile.getAbsolutePath() + " " + LICENSE_FILE,
+                "chmod 644 " + LICENSE_FILE,
+                "chown root:root " + LICENSE_FILE
+            };
 
-            Log.i(TAG, "✅ License written to encrypted file");
+            for (String cmd : commands) {
+                executeRootCommand(cmd);
+            }
+
+            // Clean up temp file
+            tempFile.delete();
+
+            Log.i(TAG, "✅ License written to encrypted file (root)");
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to write license file: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Execute command with root privileges
+     */
+    private void executeRootCommand(String command) {
+        try {
+            Process process = Runtime.getRuntime().exec("su");
+            java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
+            os.writeBytes(command + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            process.waitFor();
+        } catch (Exception e) {
+            Log.w(TAG, "Root command failed: " + e.getMessage());
         }
     }
 
