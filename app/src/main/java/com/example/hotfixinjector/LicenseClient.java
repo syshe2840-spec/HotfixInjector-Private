@@ -412,17 +412,28 @@ public class LicenseClient {
      */
     public static LicenseData readLicenseFromFile() {
         try {
+            Log.i("LicenseClient", "[READ] Reading license file: " + LICENSE_FILE);
+
             // Try reading with root first (since file is in /data/adb/)
             String encrypted = readFileWithRoot(LICENSE_FILE);
 
             if (encrypted == null || encrypted.isEmpty()) {
-                Log.e("LicenseClient", "Failed to read license file with root");
+                Log.e("LicenseClient", "[READ] Failed to read license file with root (empty or null)");
                 return null;
             }
+
+            Log.i("LicenseClient", "[READ] File read successfully (" + encrypted.length() + " chars)");
 
             // Decrypt
             LicenseClient tempClient = new LicenseClient(null);
             String decrypted = tempClient.decryptAES(encrypted);
+
+            if (decrypted == null || decrypted.isEmpty()) {
+                Log.e("LicenseClient", "[READ] Decryption failed (empty or null)");
+                return null;
+            }
+
+            Log.i("LicenseClient", "[READ] Decryption successful");
 
             // Parse JSON
             JSONObject json = new JSONObject(decrypted);
@@ -430,10 +441,21 @@ public class LicenseClient {
             long expires = json.getLong("expires");
             String device = json.getString("device");
 
-            return new LicenseData(token, expires, device);
+            Log.i("LicenseClient", "[READ] License parsed - token: " + token.substring(0, Math.min(20, token.length())) + "..., expires: " + expires);
+
+            LicenseData data = new LicenseData(token, expires, device);
+
+            if (!data.isValid()) {
+                Log.e("LicenseClient", "[READ] License data is INVALID (expired or empty token)");
+                if (expires > 0) {
+                    Log.e("LicenseClient", "[READ] Expiration check - now: " + System.currentTimeMillis() + ", expires: " + expires);
+                }
+            }
+
+            return data;
 
         } catch (Exception e) {
-            Log.e("LicenseClient", "Failed to read license file: " + e.getMessage());
+            Log.e("LicenseClient", "[READ] Exception reading license file: " + e.getMessage());
             e.printStackTrace();
             return null;
         }
@@ -444,6 +466,8 @@ public class LicenseClient {
      */
     private static String readFileWithRoot(String filePath) {
         try {
+            Log.i("LicenseClient", "[ROOT] Executing: su -c 'cat " + filePath + "'");
+
             Process process = Runtime.getRuntime().exec("su");
             java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
             os.writeBytes("cat " + filePath + "\n");
@@ -460,15 +484,44 @@ public class LicenseClient {
                 output.append(line).append("\n");
             }
 
-            process.waitFor();
+            // Read errors
+            BufferedReader errorReader = new BufferedReader(
+                new InputStreamReader(process.getErrorStream())
+            );
+            StringBuilder errors = new StringBuilder();
+            while ((line = errorReader.readLine()) != null) {
+                errors.append(line).append("\n");
+            }
+
+            int exitCode = process.waitFor();
             reader.close();
+            errorReader.close();
             os.close();
 
+            if (exitCode != 0) {
+                Log.e("LicenseClient", "[ROOT] Command failed with exit code: " + exitCode);
+                if (errors.length() > 0) {
+                    Log.e("LicenseClient", "[ROOT] Errors: " + errors.toString());
+                }
+                return null;
+            }
+
+            if (errors.length() > 0) {
+                Log.w("LicenseClient", "[ROOT] Warnings: " + errors.toString());
+            }
+
             String result = output.toString().trim();
-            return result.isEmpty() ? null : result;
+            if (result.isEmpty()) {
+                Log.e("LicenseClient", "[ROOT] Read result is empty");
+                return null;
+            }
+
+            Log.i("LicenseClient", "[ROOT] Read successful (" + result.length() + " chars)");
+            return result;
 
         } catch (Exception e) {
-            Log.e("LicenseClient", "Root read failed: " + e.getMessage());
+            Log.e("LicenseClient", "[ROOT] Exception: " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
