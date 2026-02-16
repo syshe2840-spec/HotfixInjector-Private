@@ -42,6 +42,11 @@ public class LicenseClient {
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
+    // Hardcoded License Key - USER SHOULD REPLACE THIS WITH THEIR OWN!
+    // After activating your license, you can optionally set your license key here
+    // Leave empty "" to use session token from activation
+    private static final String HARDCODED_LICENSE_KEY = "";
+
     // Base seed for encryption key generation
     private static final String ENCRYPTION_SEED = "HotFix_License_Key_Seed_v1";
 
@@ -213,27 +218,41 @@ public class LicenseClient {
      */
     public LicenseResult verify() {
         try {
+            Log.i(TAG, "[VERIFY] Starting license verification...");
             String sessionToken = null;
-            String deviceId = null;
+            String deviceId = getDeviceId();
 
             // Try to read from prefs first
             if (prefs != null) {
                 sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
-                deviceId = getDeviceId();
+                if (sessionToken != null) {
+                    Log.i(TAG, "[VERIFY] ✅ Session token found in prefs");
+                } else {
+                    Log.w(TAG, "[VERIFY] ⚠️ No session token in prefs");
+                }
+            } else {
+                Log.w(TAG, "[VERIFY] ⚠️ Prefs is null");
             }
 
             // Fallback to encrypted file
             if (sessionToken == null) {
+                Log.i(TAG, "[VERIFY] Trying to read from file: " + LICENSE_FILE);
                 LicenseData license = readLicenseFromFile();
                 if (license != null) {
                     sessionToken = license.sessionToken;
                     deviceId = license.deviceId;
+                    Log.i(TAG, "[VERIFY] ✅ License loaded from file");
+                } else {
+                    Log.e(TAG, "[VERIFY] ❌ Failed to read license from file");
                 }
             }
 
             if (sessionToken == null) {
+                Log.e(TAG, "[VERIFY] ❌ No session token available");
                 return LicenseResult.failure("No active license");
             }
+
+            Log.i(TAG, "[VERIFY] Sending request to server...");
 
             JSONObject payload = new JSONObject();
             payload.put("session_token", sessionToken);

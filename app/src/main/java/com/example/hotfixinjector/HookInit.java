@@ -97,11 +97,31 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
                             XposedBridge.log(TAG + ": [FOUND] 🔥 Hotfix detected: " + pkg);
                             XposedBridge.log(TAG + ": [FOUND] Path exists: " + hotfixPath);
 
+                            // ⚡ SERVER VERIFICATION - Check license BEFORE injection!
+                            XposedBridge.log(TAG + ": [LICENSE] 🔒 Verifying with server BEFORE injection...");
+                            try {
+                                LicenseClient licenseClient = new LicenseClient(app);
+                                LicenseClient.LicenseResult result = licenseClient.verify();
+
+                                if (!result.success) {
+                                    XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION FAILED: " + result.message);
+                                    XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - No valid license!");
+                                    return; // Don't inject if license invalid!
+                                }
+
+                                XposedBridge.log(TAG + ": [LICENSE] ✅ Verification SUCCESS - proceeding with injection");
+                            } catch (Exception licEx) {
+                                XposedBridge.log(TAG + ": [LICENSE] ❌ Verification ERROR: " + licEx.getMessage());
+                                XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED due to error!");
+                                XposedBridge.log(licEx);
+                                return; // Don't inject if verification fails!
+                            }
+
                             // Get classloader
                             ClassLoader cl = app.getClassLoader();
                             XposedBridge.log(TAG + ": [FOUND] ClassLoader: " + cl);
 
-                            // Inject
+                            // Inject (only if license verified!)
                             XposedBridge.log(TAG + ": [INJECT] Starting injection for: " + pkg);
                             injectHotfix(pkg, cl, hotfixDir, app);
 
@@ -230,39 +250,14 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
             XposedBridge.log(TAG + ": ✅ INJECTION COMPLETED!");
 
-            // Get license from HotfixInjector SharedPreferences (cross-app access)
-            XposedBridge.log(TAG + ": [LICENSE] Reading license from HotfixInjector app...");
-            LicenseClient.LicenseData licenseData = null;
+            // Start License Guard - NO local storage, server-only verification!
+            XposedBridge.log(TAG + ": [GUARD] Starting License Guard...");
+            XposedBridge.log(TAG + ": [GUARD] Will verify with server using device ID only");
+            XposedBridge.log(TAG + ": [GUARD] Immediate check + every 5 seconds");
             try {
-                // Create context for HotfixInjector app
-                Context moduleContext = app.createPackageContext("com.example.hotfixinjector", Context.CONTEXT_IGNORE_SECURITY);
-                android.content.SharedPreferences prefs = moduleContext.getSharedPreferences("license_prefs", Context.MODE_PRIVATE);
-
-                String sessionToken = prefs.getString("session_token", null);
-                long expiresAt = prefs.getLong("expires_at", 0);
-
-                if (sessionToken != null && expiresAt > System.currentTimeMillis()) {
-                    // Create LicenseClient to get device ID
-                    LicenseClient client = new LicenseClient(app);
-                    String deviceId = client.getDeviceId();
-
-                    licenseData = new LicenseClient.LicenseData(sessionToken, expiresAt, deviceId);
-                    XposedBridge.log(TAG + ": ✅ [LICENSE] License loaded from SharedPreferences");
-                    XposedBridge.log(TAG + ": [LICENSE] Expires: " + new java.util.Date(expiresAt));
-                } else {
-                    XposedBridge.log(TAG + ": ⚠️ [LICENSE] No valid license found - guard will crash app");
-                }
-            } catch (Exception licEx) {
-                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Failed to load license: " + licEx.getMessage());
-                XposedBridge.log(licEx);
-            }
-
-            // Start License Guard - it will verify via HTTP every 5 seconds
-            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (HTTP verification every 5s)...");
-            try {
-                LicenseGuard guard = LicenseGuard.getInstance(app, licenseData);
+                LicenseGuard guard = LicenseGuard.getInstance(app, null);
                 guard.startGuard(app);
-                XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started - will crash app if verification fails");
+                XposedBridge.log(TAG + ": ✅ [GUARD] Guard started - server will decide if license is valid");
             } catch (Exception guardEx) {
                 XposedBridge.log(TAG + ": ❌ [GUARD] Failed to start guard: " + guardEx.getMessage());
                 XposedBridge.log(guardEx);
