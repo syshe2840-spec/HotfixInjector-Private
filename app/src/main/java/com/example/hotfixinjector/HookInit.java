@@ -77,25 +77,6 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                             XposedBridge.log(TAG + ": [CHECK] Checking package: " + pkg);
 
-                            // License check from encrypted file (world-readable but encrypted)
-                            try {
-                                XposedBridge.log(TAG + ": [LICENSE] Reading encrypted license file...");
-                                LicenseClient.LicenseData license = LicenseClient.readLicenseFromFile();
-
-                                if (license == null || !license.isValid()) {
-                                    XposedBridge.log(TAG + ": ❌ [LICENSE] No valid license found - INJECTION BLOCKED");
-                                    XposedBridge.log(TAG + ": ℹ️ [LICENSE] Please activate license in HotfixInjector app first");
-                                    return;
-                                }
-
-                                XposedBridge.log(TAG + ": ✅ [LICENSE] Valid license found - proceeding with injection");
-                                XposedBridge.log(TAG + ": [LICENSE] Session: " + license.sessionToken.substring(0, Math.min(20, license.sessionToken.length())) + "...");
-                            } catch (Exception licEx) {
-                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] License check failed: " + licEx.getMessage());
-                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Proceeding anyway to avoid breaking injection");
-                                // Continue anyway to avoid breaking injection
-                            }
-
                             // Check hotfix folder
                             String hotfixPath = "/data/data/" + pkg + "/" + HOTFIX_FOLDER;
                             XposedBridge.log(TAG + ": [CHECK] Hotfix path: " + hotfixPath);

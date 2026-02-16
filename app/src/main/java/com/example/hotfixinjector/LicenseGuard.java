@@ -51,16 +51,46 @@ public class LicenseGuard {
         guardThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                Log.i(TAG, "🛡️ License Guard started - verifying every 5 seconds");
+                Log.i(TAG, "🛡️ License Guard started - verifying immediately then every 5 seconds");
 
                 int failureCount = 0;
                 final int MAX_FAILURES = 2; // Allow 2 consecutive failures before crash
 
+                // IMMEDIATE VERIFICATION ON START (no sleep first)
+                try {
+                    Log.i(TAG, "🔍 IMMEDIATE verification on app start...");
+
+                    LicenseClient.LicenseResult result = licenseClient.verify();
+
+                    if (result.success) {
+                        Log.i(TAG, "✅ Initial license verification SUCCESS");
+                        failureCount = 0;
+                    } else {
+                        failureCount++;
+                        Log.e(TAG, "❌ Initial license verification FAILED: " + result.message);
+
+                        if (failureCount >= MAX_FAILURES) {
+                            Log.e(TAG, "💣 INITIAL VERIFICATION FAILED - TERMINATING APPLICATION");
+                            crashApplication("Initial verification failed: " + result.message);
+                            return;
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "❌ Initial verification exception: " + e.getMessage());
+                    failureCount++;
+
+                    if (failureCount >= MAX_FAILURES) {
+                        crashApplication("Initial verification error: " + e.getMessage());
+                        return;
+                    }
+                }
+
+                // PERIODIC VERIFICATION LOOP (every 5 seconds)
                 while (isRunning.get()) {
                     try {
                         Thread.sleep(VERIFICATION_INTERVAL);
 
-                        Log.d(TAG, "🔍 Verifying license...");
+                        Log.d(TAG, "🔍 Periodic verification...");
 
                         LicenseClient.LicenseResult result = licenseClient.verify();
 
