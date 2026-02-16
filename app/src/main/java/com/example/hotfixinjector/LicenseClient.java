@@ -44,6 +44,11 @@ public class LicenseClient {
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
+    // ⚡ APP SIGNATURE (SHA256) - Must match server whitelist
+    // Server will ONLY respond to requests with this signature
+    // Change this to your app's SHA256 signature
+    private static final String APP_SIGNATURE = "A40DA80A59D170CAA950CF15C18C454D47A39B26989D8B640ECD745BA71BF5DC";
+
     // ⚡ HARDCODED LICENSE KEY - USER MUST SET THIS!
     // Put your license key here so module can verify without file/SharedPreferences
     // Example: "HOTFIX-XXXX-XXXX-XXXX-XXXX"
@@ -52,6 +57,9 @@ public class LicenseClient {
 
     // Base seed for encryption key generation
     private static final String ENCRYPTION_SEED = "HotFix_License_Key_Seed_v1";
+
+    // Nonce validity duration (7 minutes in milliseconds)
+    private static final long NONCE_VALIDITY_MS = 7 * 60 * 1000;
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -182,9 +190,10 @@ public class LicenseClient {
     public LicenseResult activate(String licenseKey) {
         try {
             JSONObject payload = new JSONObject();
+            payload.put("app_signature", APP_SIGNATURE);  // ⚡ NEW: App signature
             payload.put("license_key", licenseKey);
             payload.put("device_id", getDeviceId());
-            payload.put("device_info", getDeviceInfo());
+            payload.put("device_info", getDeviceInfo()); // ⚡ Now returns JSONObject
 
             String response = sendRequest("/activate", payload);
             JSONObject json = new JSONObject(response);
@@ -328,9 +337,10 @@ public class LicenseClient {
             Log.d(TAG, "[VERIFY] Current nonce length: " + license.nonce.length());
 
             JSONObject payload = new JSONObject();
-            payload.put("license_key", license.licenseKey);  // ⚡ NEW: Include license_key for XOR
+            payload.put("app_signature", APP_SIGNATURE);      // ⚡ App signature
+            payload.put("license_key", license.licenseKey);
             payload.put("session_token", license.sessionToken);
-            payload.put("nonce", license.nonce);  // ⚡ NEW: Send current nonce
+            payload.put("nonce", license.nonce);
             payload.put("device_id", license.deviceId);
 
             String response = sendRequest("/verify", payload);
@@ -821,6 +831,7 @@ public class LicenseClient {
         public final String licenseKey;        // License key (not session token!)
         public final String sessionToken;      // Session token from server
         public final String nonce;             // One-time use token (updated after each verification)
+        public final long nonceTimestamp;      // When nonce was created (SERVER time)
         public final String status;            // "valid" | "invalid" | "burned"
         public final long lastCheck;           // Last online verification timestamp (CLIENT time)
         public final long lastServerTime;      // Server time at last sync (SERVER time)
@@ -828,11 +839,13 @@ public class LicenseClient {
         public final long expiresAt;           // When license expires (SERVER time, 0 = never)
         public final String deviceId;
 
-        public LicenseData(String licenseKey, String sessionToken, String nonce, String status,
-                          long lastCheck, long lastServerTime, long createdAt, long expiresAt, String deviceId) {
+        public LicenseData(String licenseKey, String sessionToken, String nonce, long nonceTimestamp,
+                          String status, long lastCheck, long lastServerTime, long createdAt,
+                          long expiresAt, String deviceId) {
             this.licenseKey = licenseKey;
             this.sessionToken = sessionToken;
             this.nonce = nonce;
+            this.nonceTimestamp = nonceTimestamp;
             this.status = status;
             this.lastCheck = lastCheck;
             this.lastServerTime = lastServerTime;
@@ -873,6 +886,19 @@ public class LicenseClient {
             }
             long estimatedServerTime = getEstimatedServerTime();
             return estimatedServerTime > expiresAt;
+        }
+
+        /**
+         * Check if nonce is expired (older than 7 minutes using estimated server time)
+         * Nonce validity: 7 minutes from creation
+         */
+        public boolean isNonceExpired() {
+            if (nonceTimestamp == 0) {
+                return true; // No timestamp = expired
+            }
+            long estimatedServerTime = getEstimatedServerTime();
+            long nonceAge = estimatedServerTime - nonceTimestamp;
+            return nonceAge > NONCE_VALIDITY_MS; // 7 minutes
         }
 
         public boolean isValid() {
@@ -922,13 +948,63 @@ public class LicenseClient {
     /**
      * Get device information
      */
-    private String getDeviceInfo() {
-        return String.format("%s %s, Android %s (SDK %d)",
-            Build.MANUFACTURER,
-            Build.MODEL,
-            Build.VERSION.RELEASE,
-            Build.VERSION.SDK_INT
-        );
+    /**
+     * Get comprehensive device information as JSON
+     */
+    private JSONObject getDeviceInfo() {
+        try {
+            JSONObject info = new JSONObject();
+
+            // Basic Info
+            info.put("manufacturer", Build.MANUFACTURER);
+            info.put("model", Build.MODEL);
+            info.put("brand", Build.BRAND);
+            info.put("device", Build.DEVICE);
+            info.put("product", Build.PRODUCT);
+            info.put("board", Build.BOARD);
+            info.put("hardware", Build.HARDWARE);
+
+            // Android Version
+            info.put("android_version", Build.VERSION.RELEASE);
+            info.put("sdk_int", Build.VERSION.SDK_INT);
+            info.put("android_id", Settings.Secure.getString(
+                context.getContentResolver(),
+                Settings.Secure.ANDROID_ID
+            ));
+
+            // Build Info
+            info.put("build_id", Build.ID);
+            info.put("build_time", Build.TIME);
+            info.put("build_type", Build.TYPE);
+            info.put("build_tags", Build.TAGS);
+            info.put("build_fingerprint", Build.FINGERPRINT);
+
+            // Display
+            info.put("display", Build.DISPLAY);
+
+            // Bootloader & Radio
+            info.put("bootloader", Build.BOOTLOADER);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                info.put("security_patch", Build.VERSION.SECURITY_PATCH);
+            }
+
+            // CPU
+            info.put("supported_abis", Build.SUPPORTED_ABIS);
+            info.put("cpu_abi", Build.CPU_ABI);
+
+            return info;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get device info: " + e.getMessage());
+            // Fallback to simple string
+            JSONObject fallback = new JSONObject();
+            try {
+                fallback.put("simple_info", String.format("%s %s, Android %s",
+                    Build.MANUFACTURER, Build.MODEL, Build.VERSION.RELEASE));
+            } catch (Exception ex) {
+                // ignore
+            }
+            return fallback;
+        }
     }
 
     /**
