@@ -37,15 +37,17 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // License file name (will be in external storage)
-    private static final String LICENSE_FILENAME = ".hf_lic_cache";
+    // License file in ROOT directory - accessible by Xposed module with root privileges
+    // Encrypted and device-specific
+    private static final String LICENSE_FILE = "/data/adb/.hf_license";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
-    // Hardcoded License Key - USER SHOULD REPLACE THIS WITH THEIR OWN!
-    // After activating your license, you can optionally set your license key here
-    // Leave empty "" to use session token from activation
+    // ⚡ HARDCODED LICENSE KEY - USER MUST SET THIS!
+    // Put your license key here so module can verify without file/SharedPreferences
+    // Example: "HOTFIX-XXXX-XXXX-XXXX-XXXX"
+    // Module will use this key to verify with server every time
     private static final String HARDCODED_LICENSE_KEY = "";
 
     // Base seed for encryption key generation
@@ -344,14 +346,10 @@ public class LicenseClient {
                 .apply();
         }
 
-        // Also clear encrypted file
+        // Also clear encrypted file from root
         try {
-            java.io.File externalStorage = Environment.getExternalStorageDirectory();
-            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
-            if (file.exists()) {
-                file.delete();
-                Log.i(TAG, "🗑️ Encrypted license file deleted");
-            }
+            executeRootCommand("rm -f " + LICENSE_FILE);
+            Log.i(TAG, "🗑️ Root license file deleted");
         } catch (Exception e) {
             Log.e(TAG, "Failed to delete license file: " + e.getMessage());
         }
@@ -384,26 +382,53 @@ public class LicenseClient {
             // Encrypt
             String encrypted = encryptAES(data.toString());
 
-            // Write to external storage (accessible by all apps, no root needed!)
-            java.io.File externalStorage = Environment.getExternalStorageDirectory();
-            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
+            // Write to ROOT directory using su command
+            Log.i(TAG, "[WRITE] Writing to root: " + LICENSE_FILE);
 
-            Log.i(TAG, "[WRITE] Writing to: " + file.getAbsolutePath());
+            writeLicenseToRootFile(encrypted);
 
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
-            fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
-            fos.flush();
-            fos.close();
-
-            Log.i(TAG, "✅ License written successfully!");
-            Log.i(TAG, "✅ File path: " + file.getAbsolutePath());
-            Log.i(TAG, "✅ File size: " + file.length() + " bytes");
-            Log.i(TAG, "✅ File readable: " + file.canRead());
+            Log.i(TAG, "✅ License written to root successfully!");
+            Log.i(TAG, "✅ File path: " + LICENSE_FILE);
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Failed to write license file: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Write license data to root file using su
+     */
+    private void writeLicenseToRootFile(String encrypted) throws Exception {
+        // Write encrypted data to temp file first
+        java.io.File tempFile = new java.io.File(context.getCacheDir(), ".hf_temp");
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile);
+        fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
+        fos.close();
+
+        Log.i(TAG, "[ROOT] Temp file written: " + tempFile.getAbsolutePath());
+
+        // Use su to copy to root location
+        Process process = Runtime.getRuntime().exec("su");
+        java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
+
+        // Copy temp file to root location
+        os.writeBytes("cp " + tempFile.getAbsolutePath() + " " + LICENSE_FILE + "\n");
+        // Set permissions so module can read
+        os.writeBytes("chmod 644 " + LICENSE_FILE + "\n");
+        os.writeBytes("exit\n");
+        os.flush();
+
+        int exitCode = process.waitFor();
+
+        // Delete temp file
+        tempFile.delete();
+
+        if (exitCode != 0) {
+            throw new Exception("Root command failed with exit code: " + exitCode);
+        }
+
+        Log.i(TAG, "[ROOT] ✅ License copied to root successfully");
     }
 
     /**
@@ -423,43 +448,47 @@ public class LicenseClient {
     }
 
     /**
-     * Read encrypted license from file (external storage - accessible by module)
+     * Read encrypted license from ROOT file (accessible by Xposed module)
      */
     public static LicenseData readLicenseFromFile() {
         try {
-            java.io.File externalStorage = Environment.getExternalStorageDirectory();
-            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
+            Log.i("LicenseClient", "[READ] Reading license from ROOT: " + LICENSE_FILE);
 
-            Log.i("LicenseClient", "[READ] Reading license from: " + file.getAbsolutePath());
+            // Read from root using cat command
+            Process process = Runtime.getRuntime().exec("su");
+            java.io.DataOutputStream os = new java.io.DataOutputStream(process.getOutputStream());
+            os.writeBytes("cat " + LICENSE_FILE + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
 
-            if (!file.exists()) {
-                Log.e("LicenseClient", "[READ] ❌ License file does not exist at: " + file.getAbsolutePath());
+            // Read output
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(process.getInputStream())
+            );
+
+            StringBuilder encrypted = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                encrypted.append(line);
+            }
+
+            int exitCode = process.waitFor();
+
+            if (exitCode != 0) {
+                Log.e("LicenseClient", "[READ] ❌ Root command failed with exit code: " + exitCode);
                 return null;
             }
 
-            if (!file.canRead()) {
-                Log.e("LicenseClient", "[READ] License file is not readable");
+            if (encrypted.length() == 0) {
+                Log.e("LicenseClient", "[READ] ❌ License file is empty or doesn't exist");
                 return null;
             }
 
-            // Read file directly from external storage (no root needed!)
-            java.io.FileInputStream fis = new java.io.FileInputStream(file);
-            byte[] data = new byte[(int) file.length()];
-            fis.read(data);
-            fis.close();
-
-            String encrypted = new String(data, StandardCharsets.UTF_8);
-
-            if (encrypted.isEmpty()) {
-                Log.e("LicenseClient", "[READ] License file is empty");
-                return null;
-            }
-
-            Log.i("LicenseClient", "[READ] File read successfully (" + encrypted.length() + " chars)");
+            Log.i("LicenseClient", "[READ] ✅ License read from root (" + encrypted.length() + " chars)");
 
             // Decrypt
             LicenseClient tempClient = new LicenseClient(null);
-            String decrypted = tempClient.decryptAES(encrypted);
+            String decrypted = tempClient.decryptAES(encrypted.toString());
 
             if (decrypted == null || decrypted.isEmpty()) {
                 Log.e("LicenseClient", "[READ] Decryption failed (empty or null)");
