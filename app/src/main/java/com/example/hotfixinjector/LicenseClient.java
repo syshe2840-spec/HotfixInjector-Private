@@ -36,8 +36,8 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // Encrypted license file (world-readable but encrypted)
-    private static final String LICENSE_FILE = "/data/local/tmp/.hf_lic_cache";
+    // Encrypted license file (on external storage, device-specific encrypted)
+    private static final String LICENSE_FILE = "/sdcard/.hf_lic_cache";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
