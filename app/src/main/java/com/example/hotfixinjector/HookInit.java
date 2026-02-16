@@ -230,28 +230,39 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
             XposedBridge.log(TAG + ": ✅ INJECTION COMPLETED!");
 
-            // Read license with root (module has privilege)
-            XposedBridge.log(TAG + ": [LICENSE] Reading license file with root...");
+            // Get license from HotfixInjector SharedPreferences (cross-app access)
+            XposedBridge.log(TAG + ": [LICENSE] Reading license from HotfixInjector app...");
             LicenseClient.LicenseData licenseData = null;
             try {
-                licenseData = LicenseClient.readLicenseFromFile();
-                if (licenseData != null && licenseData.isValid()) {
-                    XposedBridge.log(TAG + ": ✅ [LICENSE] License data loaded successfully");
-                    XposedBridge.log(TAG + ": [LICENSE] Device: " + licenseData.deviceId.substring(0, Math.min(16, licenseData.deviceId.length())) + "...");
+                // Create context for HotfixInjector app
+                Context moduleContext = app.createPackageContext("com.example.hotfixinjector", Context.CONTEXT_IGNORE_SECURITY);
+                android.content.SharedPreferences prefs = moduleContext.getSharedPreferences("license_prefs", Context.MODE_PRIVATE);
+
+                String sessionToken = prefs.getString("session_token", null);
+                long expiresAt = prefs.getLong("expires_at", 0);
+
+                if (sessionToken != null && expiresAt > System.currentTimeMillis()) {
+                    // Create LicenseClient to get device ID
+                    LicenseClient client = new LicenseClient(app);
+                    String deviceId = client.getDeviceId();
+
+                    licenseData = new LicenseClient.LicenseData(sessionToken, expiresAt, deviceId);
+                    XposedBridge.log(TAG + ": ✅ [LICENSE] License loaded from SharedPreferences");
+                    XposedBridge.log(TAG + ": [LICENSE] Expires: " + new java.util.Date(expiresAt));
                 } else {
                     XposedBridge.log(TAG + ": ⚠️ [LICENSE] No valid license found - guard will crash app");
                 }
             } catch (Exception licEx) {
-                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Failed to read license: " + licEx.getMessage());
+                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Failed to load license: " + licEx.getMessage());
                 XposedBridge.log(licEx);
             }
 
-            // Start License Guard with pre-loaded license data
-            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (5-second verification)...");
+            // Start License Guard - it will verify via HTTP every 5 seconds
+            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (HTTP verification every 5s)...");
             try {
                 LicenseGuard guard = LicenseGuard.getInstance(app, licenseData);
                 guard.startGuard(app);
-                XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started successfully");
+                XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started - will crash app if verification fails");
             } catch (Exception guardEx) {
                 XposedBridge.log(TAG + ": ❌ [GUARD] Failed to start guard: " + guardEx.getMessage());
                 XposedBridge.log(guardEx);
