@@ -275,8 +275,12 @@ public class LicenseClient {
             }
 
         } catch (Exception e) {
-            Log.e(TAG, "❌ Verification exception: " + e.getMessage());
-            return LicenseResult.failure("Network error");
+            Log.e(TAG, "❌❌❌ VERIFICATION EXCEPTION ❌❌❌");
+            Log.e(TAG, "❌ Exception type: " + e.getClass().getName());
+            Log.e(TAG, "❌ Exception message: " + e.getMessage());
+            Log.e(TAG, "❌ Stack trace:");
+            e.printStackTrace();
+            return LicenseResult.failure("Network error: " + e.getMessage());
         }
     }
 
@@ -657,8 +661,16 @@ public class LicenseClient {
      * Send encrypted request to server
      */
     private String sendRequest(String endpoint, JSONObject payload) throws Exception {
+        Log.i(TAG, "[HTTP] ========================================");
+        Log.i(TAG, "[HTTP] Preparing HTTP request");
+        Log.i(TAG, "[HTTP] Endpoint: " + endpoint);
+        Log.i(TAG, "[HTTP] Full URL: " + API_BASE_URL + endpoint);
+
         URL url = new URL(API_BASE_URL + endpoint);
+        Log.i(TAG, "[HTTP] URL object created");
+
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        Log.i(TAG, "[HTTP] Connection opened");
 
         try {
             conn.setRequestMethod("POST");
@@ -667,19 +679,25 @@ public class LicenseClient {
             conn.setDoOutput(true);
             conn.setConnectTimeout(10000);
             conn.setReadTimeout(10000);
+            Log.i(TAG, "[HTTP] Request configured (timeout: 10s)");
 
             // Send encrypted payload
             String jsonString = payload.toString();
+            Log.i(TAG, "[HTTP] Payload size: " + jsonString.length() + " bytes");
 
             // For now, sending plain JSON (you can add AES encryption here if needed)
             // String encrypted = encryptAES(jsonString);
 
+            Log.i(TAG, "[HTTP] Writing payload...");
             OutputStream os = conn.getOutputStream();
             os.write(jsonString.getBytes(StandardCharsets.UTF_8));
             os.flush();
             os.close();
+            Log.i(TAG, "[HTTP] Payload sent successfully");
 
+            Log.i(TAG, "[HTTP] Waiting for response...");
             int responseCode = conn.getResponseCode();
+            Log.i(TAG, "[HTTP] Response code: " + responseCode);
 
             BufferedReader reader;
             if (responseCode >= 200 && responseCode < 300) {
