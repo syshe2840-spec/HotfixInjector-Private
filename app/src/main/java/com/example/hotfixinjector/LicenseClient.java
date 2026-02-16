@@ -246,16 +246,20 @@ public class LicenseClient {
      * Clear license data
      */
     public void clearLicense() {
-        prefs.edit()
-            .remove(KEY_SESSION_TOKEN)
-            .remove(KEY_EXPIRES_AT)
-            .apply();
+        // Clear SharedPreferences if available
+        if (prefs != null) {
+            prefs.edit()
+                .remove(KEY_SESSION_TOKEN)
+                .remove(KEY_EXPIRES_AT)
+                .apply();
+        }
 
         // Also clear encrypted file
         try {
             java.io.File file = new java.io.File(LICENSE_FILE);
             if (file.exists()) {
                 file.delete();
+                Log.i(TAG, "🗑️ Encrypted license file deleted");
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to delete license file: " + e.getMessage());
@@ -267,6 +271,11 @@ public class LicenseClient {
      */
     private void writeLicenseToFile() {
         try {
+            if (prefs == null) {
+                Log.w(TAG, "Cannot write license file: prefs is null");
+                return;
+            }
+
             String sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
             long expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0);
 
