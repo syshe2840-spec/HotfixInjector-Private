@@ -42,9 +42,8 @@ public class LicenseClient {
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
-    // AES-256 Encryption Key (32 bytes)
-    // ⚠️ This MUST match the ENCRYPTION_KEY in worker.js
-    private static final String ENCRYPTION_KEY = "Kh7Gm2Qp5Rt8Wx4Zv1Nc9Bs6Yf3Dj0A"; // 32 bytes exactly
+    // Base seed for encryption key generation
+    private static final String ENCRYPTION_SEED = "HotFix_License_Key_Seed_v1";
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -85,6 +84,41 @@ public class LicenseClient {
 
         cachedDeviceId = deviceId;
         return deviceId;
+    }
+
+    /**
+     * Generate device-specific encryption key (32 bytes)
+     * Key is unique per device but deterministic (same device = same key)
+     */
+    private static String getDeviceEncryptionKey() {
+        // Generate hardware fingerprint
+        StringBuilder hwInfo = new StringBuilder();
+        hwInfo.append(Build.BOARD).append("|");
+        hwInfo.append(Build.BRAND).append("|");
+        hwInfo.append(Build.DEVICE).append("|");
+        hwInfo.append(Build.HARDWARE).append("|");
+        hwInfo.append(Build.MANUFACTURER).append("|");
+        hwInfo.append(Build.MODEL).append("|");
+        hwInfo.append(Build.PRODUCT).append("|");
+        hwInfo.append(ENCRYPTION_SEED);
+
+        // Generate SHA-256 hash and take first 32 bytes
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(hwInfo.toString().getBytes(StandardCharsets.UTF_8));
+
+            // Convert first 32 bytes to hex string (32 bytes = 64 hex chars, take first 32)
+            StringBuilder hexString = new StringBuilder();
+            for (int i = 0; i < 16; i++) { // 16 bytes = 32 hex chars = 32 bytes when converted back
+                String hex = Integer.toHexString(0xff & hash[i]);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (Exception e) {
+            // Fallback to fixed key
+            return "Kh7Gm2Qp5Rt8Wx4Zv1Nc9Bs6Yf3Dj0A";
+        }
     }
 
     /**
@@ -432,11 +466,12 @@ public class LicenseClient {
     }
 
     /**
-     * Encrypt data with AES-256-GCM
+     * Encrypt data with AES-256-GCM (device-specific key)
      */
     private String encryptAES(String plaintext) throws Exception {
+        String deviceKey = getDeviceEncryptionKey();
         SecretKeySpec keySpec = new SecretKeySpec(
-            ENCRYPTION_KEY.getBytes(StandardCharsets.UTF_8),
+            deviceKey.getBytes(StandardCharsets.UTF_8),
             "AES"
         );
 
@@ -460,13 +495,14 @@ public class LicenseClient {
     }
 
     /**
-     * Decrypt data with AES-256-GCM
+     * Decrypt data with AES-256-GCM (device-specific key)
      */
     private String decryptAES(String encrypted) throws Exception {
         byte[] combined = Base64.decode(encrypted, Base64.NO_WRAP);
 
+        String deviceKey = getDeviceEncryptionKey();
         SecretKeySpec keySpec = new SecretKeySpec(
-            ENCRYPTION_KEY.getBytes(StandardCharsets.UTF_8),
+            deviceKey.getBytes(StandardCharsets.UTF_8),
             "AES"
         );
 
