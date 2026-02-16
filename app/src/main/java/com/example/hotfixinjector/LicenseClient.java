@@ -36,6 +36,9 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
+    // Encrypted license file (world-readable but encrypted)
+    private static final String LICENSE_FILE = "/data/local/tmp/.hf_lic_cache";
+
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
@@ -48,8 +51,13 @@ public class LicenseClient {
     private String cachedDeviceId;
 
     public LicenseClient(Context context) {
-        this.context = context.getApplicationContext();
-        this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (context != null) {
+            this.context = context.getApplicationContext();
+            this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        } else {
+            this.context = null;
+            this.prefs = null;
+        }
     }
 
     /**
@@ -60,31 +68,14 @@ public class LicenseClient {
             return cachedDeviceId;
         }
 
+        if (prefs == null) {
+            // Generate without caching (for temp instances)
+            return generateDeviceId();
+        }
+
         String deviceId = prefs.getString(KEY_DEVICE_ID, null);
         if (deviceId == null) {
-            // Generate unique device ID using REAL hardware info
-            // These CANNOT be changed by Device ID Changer apps!
-            StringBuilder hwInfo = new StringBuilder();
-
-            // Hardware-level identifiers (unchangeable)
-            hwInfo.append(Build.BOARD).append("|");        // Motherboard
-            hwInfo.append(Build.BRAND).append("|");        // Brand
-            hwInfo.append(Build.DEVICE).append("|");       // Device codename
-            hwInfo.append(Build.HARDWARE).append("|");     // Hardware name
-            hwInfo.append(Build.MANUFACTURER).append("|"); // Manufacturer
-            hwInfo.append(Build.MODEL).append("|");        // Model
-            hwInfo.append(Build.PRODUCT).append("|");      // Product name
-            hwInfo.append(Build.SERIAL).append("|");       // Serial number
-
-            // Android ID (as backup)
-            String androidId = Settings.Secure.getString(
-                context.getContentResolver(),
-                Settings.Secure.ANDROID_ID
-            );
-            hwInfo.append(androidId);
-
-            // Generate SHA-256 hash of all hardware info
-            deviceId = sha256(hwInfo.toString());
+            deviceId = generateDeviceId();
 
             // Save permanently
             prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply();
@@ -94,6 +85,37 @@ public class LicenseClient {
 
         cachedDeviceId = deviceId;
         return deviceId;
+    }
+
+    /**
+     * Generate device ID from hardware info
+     */
+    private String generateDeviceId() {
+        // Generate unique device ID using REAL hardware info
+        // These CANNOT be changed by Device ID Changer apps!
+        StringBuilder hwInfo = new StringBuilder();
+
+        // Hardware-level identifiers (unchangeable)
+        hwInfo.append(Build.BOARD).append("|");        // Motherboard
+        hwInfo.append(Build.BRAND).append("|");        // Brand
+        hwInfo.append(Build.DEVICE).append("|");       // Device codename
+        hwInfo.append(Build.HARDWARE).append("|");     // Hardware name
+        hwInfo.append(Build.MANUFACTURER).append("|"); // Manufacturer
+        hwInfo.append(Build.MODEL).append("|");        // Model
+        hwInfo.append(Build.PRODUCT).append("|");      // Product name
+        hwInfo.append(Build.SERIAL).append("|");       // Serial number
+
+        // Android ID (as backup) - only if context available
+        if (context != null) {
+            String androidId = Settings.Secure.getString(
+                context.getContentResolver(),
+                Settings.Secure.ANDROID_ID
+            );
+            hwInfo.append(androidId);
+        }
+
+        // Generate SHA-256 hash of all hardware info
+        return sha256(hwInfo.toString());
     }
 
     /**
@@ -135,6 +157,9 @@ public class LicenseClient {
                     .putLong(KEY_EXPIRES_AT, expiresAt)
                     .apply();
 
+                // Write to encrypted file for cross-app access
+                writeLicenseToFile();
+
                 Log.i(TAG, "✅ License activated successfully");
                 return LicenseResult.success("License activated");
             } else {
@@ -150,18 +175,35 @@ public class LicenseClient {
     }
 
     /**
-     * Verify license with server (called every 10 seconds)
+     * Verify license with server (called every 5 seconds)
      */
     public LicenseResult verify() {
         try {
-            String sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
+            String sessionToken = null;
+            String deviceId = null;
+
+            // Try to read from prefs first
+            if (prefs != null) {
+                sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
+                deviceId = getDeviceId();
+            }
+
+            // Fallback to encrypted file
+            if (sessionToken == null) {
+                LicenseData license = readLicenseFromFile();
+                if (license != null) {
+                    sessionToken = license.sessionToken;
+                    deviceId = license.deviceId;
+                }
+            }
+
             if (sessionToken == null) {
                 return LicenseResult.failure("No active license");
             }
 
             JSONObject payload = new JSONObject();
             payload.put("session_token", sessionToken);
-            payload.put("device_id", getDeviceId());
+            payload.put("device_id", deviceId);
 
             String response = sendRequest("/verify", payload);
             JSONObject json = new JSONObject(response);
@@ -208,6 +250,115 @@ public class LicenseClient {
             .remove(KEY_SESSION_TOKEN)
             .remove(KEY_EXPIRES_AT)
             .apply();
+
+        // Also clear encrypted file
+        try {
+            java.io.File file = new java.io.File(LICENSE_FILE);
+            if (file.exists()) {
+                file.delete();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to delete license file: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Write encrypted license to file (world-readable location)
+     */
+    private void writeLicenseToFile() {
+        try {
+            String sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
+            long expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0);
+
+            if (sessionToken == null) {
+                return;
+            }
+
+            // Create JSON with license data
+            JSONObject data = new JSONObject();
+            data.put("token", sessionToken);
+            data.put("expires", expiresAt);
+            data.put("device", getDeviceId());
+            data.put("timestamp", System.currentTimeMillis());
+
+            // Encrypt
+            String encrypted = encryptAES(data.toString());
+
+            // Write to file
+            java.io.File file = new java.io.File(LICENSE_FILE);
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+            fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
+            fos.close();
+
+            // Make world-readable
+            file.setReadable(true, false);
+
+            Log.i(TAG, "✅ License written to encrypted file");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to write license file: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Read encrypted license from file
+     */
+    public static LicenseData readLicenseFromFile() {
+        try {
+            java.io.File file = new java.io.File(LICENSE_FILE);
+            if (!file.exists()) {
+                return null;
+            }
+
+            // Read file
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            byte[] data = new byte[(int) file.length()];
+            fis.read(data);
+            fis.close();
+
+            String encrypted = new String(data, StandardCharsets.UTF_8);
+
+            // Decrypt
+            LicenseClient tempClient = new LicenseClient(null);
+            String decrypted = tempClient.decryptAES(encrypted);
+
+            // Parse JSON
+            JSONObject json = new JSONObject(decrypted);
+            String token = json.getString("token");
+            long expires = json.getLong("expires");
+            String device = json.getString("device");
+
+            return new LicenseData(token, expires, device);
+
+        } catch (Exception e) {
+            Log.e("LicenseClient", "Failed to read license file: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * License data holder
+     */
+    public static class LicenseData {
+        public final String sessionToken;
+        public final long expiresAt;
+        public final String deviceId;
+
+        public LicenseData(String sessionToken, long expiresAt, String deviceId) {
+            this.sessionToken = sessionToken;
+            this.expiresAt = expiresAt;
+            this.deviceId = deviceId;
+        }
+
+        public boolean isValid() {
+            if (sessionToken == null || sessionToken.isEmpty()) {
+                return false;
+            }
+            if (expiresAt > 0 && System.currentTimeMillis() > expiresAt) {
+                return false;
+            }
+            return true;
+        }
     }
 
     /**
