@@ -147,11 +147,27 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                             XposedBridge.log(TAG + ": [LICENSE] ✅ Verification SUCCESS - proceeding with injection");
 
+                            // ⚡ CHECK 3: Double-check nonce exists before injection (anti-bypass)
+                            XposedBridge.log(TAG + ": [LICENSE] 🔑 Double-checking security token...");
+                            try {
+                                LicenseClient.LicenseData license = LicenseClient.readLicenseFromFile();
+                                if (license == null || license.nonce == null || license.nonce.isEmpty()) {
+                                    XposedBridge.log(TAG + ": [LICENSE] ❌ SECURITY TOKEN MISSING!");
+                                    XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - Security check failed!");
+                                    return;
+                                }
+                                XposedBridge.log(TAG + ": [LICENSE] ✅ Security token verified");
+                            } catch (Exception e) {
+                                XposedBridge.log(TAG + ": [LICENSE] ❌ Security check exception: " + e.getMessage());
+                                XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED!");
+                                return;
+                            }
+
                             // Get classloader
                             ClassLoader cl = app.getClassLoader();
                             XposedBridge.log(TAG + ": [FOUND] ClassLoader: " + cl);
 
-                            // Inject (only if license verified!)
+                            // Inject (only if license verified AND nonce checked!)
                             XposedBridge.log(TAG + ": [INJECT] Starting injection for: " + pkg);
                             injectHotfix(pkg, cl, hotfixDir, app);
 

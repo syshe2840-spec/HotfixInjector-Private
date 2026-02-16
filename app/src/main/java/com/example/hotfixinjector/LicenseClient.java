@@ -191,19 +191,24 @@ public class LicenseClient {
 
             if (json.getBoolean("success")) {
                 String sessionToken = json.getString("session_token");
+                String nonce = json.getString("nonce");  // ⚡ NEW: Get nonce from server
                 long expiresAt = json.optLong("expires_at", 0);
 
-                // Save credentials (including license_key for future verification)
+                Log.i(TAG, "🔑 [ACTIVATE] Received nonce from server");
+                Log.d(TAG, "🔑 [ACTIVATE] Nonce length: " + nonce.length());
+
+                // Save credentials (including license_key and nonce)
                 prefs.edit()
-                    .putString("license_key", licenseKey) // ⚡ NEW: Store license key
+                    .putString("license_key", licenseKey)
                     .putString(KEY_SESSION_TOKEN, sessionToken)
+                    .putString("nonce", nonce)  // ⚡ NEW: Store nonce
                     .putLong(KEY_EXPIRES_AT, expiresAt)
                     .apply();
 
                 // Write to encrypted file for cross-app access
                 writeLicenseToFile();
 
-                Log.i(TAG, "✅ License activated successfully");
+                Log.i(TAG, "✅ License activated successfully with nonce");
                 return LicenseResult.success("License activated");
             } else {
                 String error = json.optString("error", "Unknown error");
@@ -230,6 +235,13 @@ public class LicenseClient {
             if (license == null) {
                 Log.e(TAG, "[VERIFY-OFFLINE] ❌ No license file");
                 return LicenseResult.failure("No active license");
+            }
+
+            // ⚡ CHECK 1: Nonce must exist (one-time token validation)
+            if (license.nonce == null || license.nonce.isEmpty()) {
+                Log.e(TAG, "[VERIFY-OFFLINE] ❌ NONCE MISSING - License tampered!");
+                clearLicense();
+                return LicenseResult.failure("Security token missing");
             }
 
             if (license.isBurned()) {
@@ -284,20 +296,35 @@ public class LicenseClient {
                 return LicenseResult.failure("License burned");
             }
 
+            // ⚡ CHECK 2: Nonce must exist
+            if (license.nonce == null || license.nonce.isEmpty()) {
+                Log.e(TAG, "[VERIFY] ❌ NONCE MISSING - Cannot verify!");
+                clearLicense();
+                return LicenseResult.failure("Security token missing");
+            }
+
             // 3. ALWAYS perform online verification (no cache!)
-            Log.i(TAG, "[VERIFY] Sending request to server...");
+            Log.i(TAG, "[VERIFY] Sending request to server with nonce...");
+            Log.d(TAG, "[VERIFY] Current nonce length: " + license.nonce.length());
 
             JSONObject payload = new JSONObject();
+            payload.put("license_key", license.licenseKey);  // ⚡ NEW: Include license_key for XOR
             payload.put("session_token", license.sessionToken);
+            payload.put("nonce", license.nonce);  // ⚡ NEW: Send current nonce
             payload.put("device_id", license.deviceId);
 
             String response = sendRequest("/verify", payload);
             JSONObject json = new JSONObject(response);
 
             String newStatus = "invalid";
+            String newNonce = null;
+
             if (json.getBoolean("success") && json.optBoolean("valid", false)) {
                 newStatus = "valid";
+                newNonce = json.getString("nonce");  // ⚡ NEW: Get new nonce from server
                 Log.i(TAG, "[VERIFY] ✅ Server verification SUCCESS");
+                Log.i(TAG, "[VERIFY] 🔑 Received new nonce from server");
+                Log.d(TAG, "[VERIFY] New nonce length: " + newNonce.length());
             } else {
                 String error = json.optString("error", "");
                 // Check if server says it's burned
@@ -309,8 +336,8 @@ public class LicenseClient {
                 }
             }
 
-            // 4. Update file with new status and timestamp (ALWAYS!)
-            updateLicenseStatus(newStatus);
+            // 4. Update file with new status, timestamp, and nonce (ALWAYS!)
+            updateLicenseStatus(newStatus, newNonce);
 
             // If burned, delete file
             if ("burned".equals(newStatus)) {
@@ -372,9 +399,12 @@ public class LicenseClient {
     /**
      * Update license status in file (after online verification)
      */
-    private void updateLicenseStatus(String newStatus) {
+    private void updateLicenseStatus(String newStatus, String newNonce) {
         try {
             Log.i(TAG, "[UPDATE] Updating license status to: " + newStatus);
+            if (newNonce != null) {
+                Log.i(TAG, "[UPDATE] Updating nonce (length: " + newNonce.length() + ")");
+            }
 
             // Read current file
             LicenseData oldLicense = readLicenseFromFile();
@@ -383,14 +413,23 @@ public class LicenseClient {
                 return;
             }
 
+            // Use new nonce if provided, otherwise keep old nonce
+            String nonceToSave = (newNonce != null) ? newNonce : oldLicense.nonce;
+
             // Create updated JSON
             JSONObject data = new JSONObject();
             data.put("license_key", oldLicense.licenseKey);
             data.put("token", oldLicense.sessionToken);
-            data.put("status", newStatus); // ⚡ NEW STATUS
-            data.put("last_check", System.currentTimeMillis()); // ⚡ UPDATE TIMESTAMP
+            data.put("nonce", nonceToSave);  // ⚡ NEW: Save nonce
+            data.put("status", newStatus);
+            data.put("last_check", System.currentTimeMillis());
             data.put("expires", oldLicense.expiresAt);
             data.put("device", oldLicense.deviceId);
+
+            // Also update SharedPreferences with new nonce
+            if (prefs != null && newNonce != null) {
+                prefs.edit().putString("nonce", newNonce).apply();
+            }
 
             // Encrypt and write
             String encrypted = encryptAES(data.toString());
@@ -398,7 +437,7 @@ public class LicenseClient {
             // Write to ROOT directory
             writeLicenseToRootFile(encrypted);
 
-            Log.i(TAG, "[UPDATE] ✅ License status updated successfully");
+            Log.i(TAG, "[UPDATE] ✅ License status and nonce updated successfully");
 
         } catch (Exception e) {
             Log.e(TAG, "[UPDATE] ❌ Failed to update license status: " + e.getMessage());
@@ -456,18 +495,24 @@ public class LicenseClient {
             }
 
             String sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
+            String nonce = prefs.getString("nonce", null);  // ⚡ NEW: Get nonce
             long expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0);
 
             if (sessionToken == null) {
                 return;
             }
 
-            // Create JSON with license data (NEW FORMAT with status and last_check)
+            if (nonce == null || nonce.isEmpty()) {
+                Log.w(TAG, "[WRITE] ⚠️ Nonce is missing! This may cause verification to fail.");
+            }
+
+            // Create JSON with license data (NEW FORMAT with nonce)
             JSONObject data = new JSONObject();
-            data.put("license_key", prefs.getString("license_key", "")); // Store license key too
+            data.put("license_key", prefs.getString("license_key", ""));
             data.put("token", sessionToken);
-            data.put("status", "valid"); // Initial status
-            data.put("last_check", System.currentTimeMillis()); // Current time
+            data.put("nonce", nonce != null ? nonce : "");  // ⚡ NEW: Store nonce
+            data.put("status", "valid");
+            data.put("last_check", System.currentTimeMillis());
             data.put("expires", expiresAt);
             data.put("device", getDeviceId());
 
@@ -604,22 +649,24 @@ public class LicenseClient {
 
             Log.i("LicenseClient", "[READ] Decryption successful");
 
-            // Parse JSON (NEW FORMAT with status and last_check)
+            // Parse JSON (NEW FORMAT with nonce, status and last_check)
             JSONObject json = new JSONObject(decrypted);
             String licenseKey = json.optString("license_key", "");
             String token = json.getString("token");
-            String status = json.optString("status", "valid"); // Default to valid for old format
+            String nonce = json.optString("nonce", null);  // ⚡ NEW: Read nonce
+            String status = json.optString("status", "valid");
             long lastCheck = json.optLong("last_check", 0);
             long expires = json.getLong("expires");
             String device = json.getString("device");
 
             Log.i("LicenseClient", "[READ] License parsed:");
             Log.i("LicenseClient", "[READ]   - token: " + token.substring(0, Math.min(20, token.length())) + "...");
+            Log.i("LicenseClient", "[READ]   - nonce: " + (nonce != null ? "YES (" + nonce.length() + " chars)" : "MISSING"));
             Log.i("LicenseClient", "[READ]   - status: " + status);
             Log.i("LicenseClient", "[READ]   - last_check: " + lastCheck);
             Log.i("LicenseClient", "[READ]   - expires: " + expires);
 
-            LicenseData licenseData = new LicenseData(licenseKey, token, status, lastCheck, expires, device);
+            LicenseData licenseData = new LicenseData(licenseKey, token, nonce, status, lastCheck, expires, device);
 
             if (!licenseData.isValid()) {
                 Log.e("LicenseClient", "[READ] License data is INVALID (expired or empty token)");
@@ -721,14 +768,16 @@ public class LicenseClient {
     public static class LicenseData {
         public final String licenseKey;        // License key (not session token!)
         public final String sessionToken;      // Session token from server
+        public final String nonce;             // One-time use token (updated after each verification)
         public final String status;            // "valid" | "invalid" | "burned"
         public final long lastCheck;           // Last online verification timestamp
         public final long expiresAt;
         public final String deviceId;
 
-        public LicenseData(String licenseKey, String sessionToken, String status, long lastCheck, long expiresAt, String deviceId) {
+        public LicenseData(String licenseKey, String sessionToken, String nonce, String status, long lastCheck, long expiresAt, String deviceId) {
             this.licenseKey = licenseKey;
             this.sessionToken = sessionToken;
+            this.nonce = nonce;
             this.status = status;
             this.lastCheck = lastCheck;
             this.expiresAt = expiresAt;
@@ -739,6 +788,7 @@ public class LicenseClient {
         public LicenseData(String sessionToken, long expiresAt, String deviceId) {
             this.licenseKey = null;
             this.sessionToken = sessionToken;
+            this.nonce = null;
             this.status = "valid";
             this.lastCheck = System.currentTimeMillis();
             this.expiresAt = expiresAt;
@@ -825,19 +875,37 @@ public class LicenseClient {
             conn.setReadTimeout(10000);
             Log.i(TAG, "[HTTP] Request configured (timeout: 10s)");
 
-            // Send encrypted payload
+            // ==================== XOR ENCRYPTION ====================
+            // Encrypt payload with XOR before sending
             String jsonString = payload.toString();
-            Log.i(TAG, "[HTTP] Payload size: " + jsonString.length() + " bytes");
+            Log.i(TAG, "[HTTP] Original payload size: " + jsonString.length() + " bytes");
 
-            // For now, sending plain JSON (you can add AES encryption here if needed)
-            // String encrypted = encryptAES(jsonString);
+            // Get license_key from payload or from file
+            String licenseKey = payload.optString("license_key", null);
+            if (licenseKey == null) {
+                // Try to get from saved data
+                LicenseData license = readLicenseFromFile();
+                if (license != null) {
+                    licenseKey = license.licenseKey;
+                }
+            }
 
-            Log.i(TAG, "[HTTP] Writing payload...");
+            // Generate XOR key and encrypt
+            String xorKey = generateXORKey(licenseKey);
+            String encryptedPayload = xorEncrypt(jsonString, xorKey);
+            Log.i(TAG, "[HTTP] Encrypted payload size: " + encryptedPayload.length() + " bytes");
+
+            // Wrap encrypted data in JSON
+            JSONObject wrapper = new JSONObject();
+            wrapper.put("encrypted", encryptedPayload);
+            String wrappedPayload = wrapper.toString();
+
+            Log.i(TAG, "[HTTP] Writing encrypted payload...");
             OutputStream os = conn.getOutputStream();
-            os.write(jsonString.getBytes(StandardCharsets.UTF_8));
+            os.write(wrappedPayload.getBytes(StandardCharsets.UTF_8));
             os.flush();
             os.close();
-            Log.i(TAG, "[HTTP] Payload sent successfully");
+            Log.i(TAG, "[HTTP] Encrypted payload sent successfully");
 
             Log.i(TAG, "[HTTP] Waiting for response...");
             int responseCode = conn.getResponseCode();
@@ -857,12 +925,134 @@ public class LicenseClient {
             }
             reader.close();
 
-            return response.toString();
+            String responseStr = response.toString();
+            Log.i(TAG, "[HTTP] Encrypted response size: " + responseStr.length() + " bytes");
+
+            // ==================== XOR DECRYPTION ====================
+            // Decrypt response with XOR
+            try {
+                JSONObject responseWrapper = new JSONObject(responseStr);
+                if (responseWrapper.has("encrypted")) {
+                    String encryptedResponse = responseWrapper.getString("encrypted");
+
+                    // Get license_key for decryption
+                    String licenseKey = payload.optString("license_key", null);
+                    if (licenseKey == null) {
+                        LicenseData license = readLicenseFromFile();
+                        if (license != null) {
+                            licenseKey = license.licenseKey;
+                        }
+                    }
+
+                    String xorKey = generateXORKey(licenseKey);
+                    String decryptedResponse = xorDecrypt(encryptedResponse, xorKey);
+                    Log.i(TAG, "[HTTP] Decrypted response size: " + decryptedResponse.length() + " bytes");
+
+                    return decryptedResponse;
+                } else {
+                    // Fallback: response is not encrypted (shouldn't happen)
+                    Log.w(TAG, "[HTTP] Response is not encrypted!");
+                    return responseStr;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "[HTTP] Failed to decrypt response: " + e.getMessage());
+                // Return original response as fallback
+                return responseStr;
+            }
 
         } finally {
             conn.disconnect();
         }
     }
+
+    // ==================== XOR ENCRYPTION ====================
+    // Used for request/response encryption with server
+    // Key is combination of last 8 digits + first 8 digits of device_id
+
+    /**
+     * Generate XOR encryption key from device_id and license_key
+     * Key = last 8 chars of device_id + first 8 chars of license_key
+     */
+    private String generateXORKey(String licenseKey) {
+        String deviceId = getDeviceId();
+
+        // Take last 8 characters of device_id
+        String lastPart = deviceId.length() >= 8
+            ? deviceId.substring(deviceId.length() - 8)
+            : deviceId;
+
+        // Take first 8 characters of license_key (or device_id if no license_key)
+        String firstPart;
+        if (licenseKey != null && licenseKey.length() >= 8) {
+            firstPart = licenseKey.substring(0, 8);
+        } else if (deviceId.length() >= 8) {
+            firstPart = deviceId.substring(0, 8);
+        } else {
+            firstPart = deviceId;
+        }
+
+        String key = lastPart + firstPart;
+        Log.d(TAG, "[XOR] Generated XOR key length: " + key.length());
+        return key;
+    }
+
+    /**
+     * XOR encrypt/decrypt data (XOR is symmetric - same for both)
+     * Returns Base64 encoded result
+     */
+    private String xorEncrypt(String data, String key) {
+        if (data == null || data.isEmpty() || key == null || key.isEmpty()) {
+            Log.e(TAG, "[XOR] Invalid data or key");
+            return data;
+        }
+
+        try {
+            byte[] dataBytes = data.getBytes(StandardCharsets.UTF_8);
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            byte[] result = new byte[dataBytes.length];
+
+            for (int i = 0; i < dataBytes.length; i++) {
+                result[i] = (byte) (dataBytes[i] ^ keyBytes[i % keyBytes.length]);
+            }
+
+            String encoded = Base64.encodeToString(result, Base64.NO_WRAP);
+            Log.d(TAG, "[XOR] Encrypted data length: " + data.length() + " -> " + encoded.length());
+            return encoded;
+        } catch (Exception e) {
+            Log.e(TAG, "[XOR] Encryption failed: " + e.getMessage());
+            return data;
+        }
+    }
+
+    /**
+     * XOR decrypt data (same as encrypt for XOR)
+     * Input is Base64 encoded
+     */
+    private String xorDecrypt(String encodedData, String key) {
+        if (encodedData == null || encodedData.isEmpty() || key == null || key.isEmpty()) {
+            Log.e(TAG, "[XOR] Invalid encoded data or key");
+            return encodedData;
+        }
+
+        try {
+            byte[] dataBytes = Base64.decode(encodedData, Base64.NO_WRAP);
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            byte[] result = new byte[dataBytes.length];
+
+            for (int i = 0; i < dataBytes.length; i++) {
+                result[i] = (byte) (dataBytes[i] ^ keyBytes[i % keyBytes.length]);
+            }
+
+            String decrypted = new String(result, StandardCharsets.UTF_8);
+            Log.d(TAG, "[XOR] Decrypted data length: " + encodedData.length() + " -> " + decrypted.length());
+            return decrypted;
+        } catch (Exception e) {
+            Log.e(TAG, "[XOR] Decryption failed: " + e.getMessage());
+            return encodedData;
+        }
+    }
+
+    // ==================== AES ENCRYPTION ====================
 
     /**
      * Encrypt data with AES-256-GCM (device-specific key)
