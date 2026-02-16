@@ -325,8 +325,15 @@ public class LicenseActivationActivity extends Activity {
 
                         if (result.success) {
                             showStatus("✅ License Activated Successfully!", "#00ff00");
-                            licenseKeyInput.setText("");
-                            updateStatus();
+
+                            // Wait 1 second then go to MainActivity
+                            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                                @Override
+                                public void run() {
+                                    finish(); // Close activation screen
+                                    // MainActivity will be shown automatically
+                                }
+                            }, 1000);
                         } else {
                             showStatus("❌ Activation Failed: " + result.message, "#ff0000");
                         }

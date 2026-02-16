@@ -334,7 +334,16 @@ function decodeSessionToken(token) {
   try {
     const decoded = atob(token);
     const [license_key, device_id, timestamp] = decoded.split(':');
-    return { license_key, device_id, timestamp: parseInt(timestamp) };
+    const ts = parseInt(timestamp);
+
+    // Check if token is expired (24 hours = 86400000 ms)
+    const TOKEN_EXPIRY = 24 * 60 * 60 * 1000;
+    if (Date.now() - ts > TOKEN_EXPIRY) {
+      console.error('❌ Session token expired');
+      return null;
+    }
+
+    return { license_key, device_id, timestamp: ts };
   } catch {
     return null;
   }
