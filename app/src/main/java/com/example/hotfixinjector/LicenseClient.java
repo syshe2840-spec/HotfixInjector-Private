@@ -36,8 +36,8 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // Encrypted license file (root-accessible location, device-specific encrypted)
-    private static final String LICENSE_FILE = "/data/adb/.hf_lic_cache";
+    // Encrypted license file (world-readable location, device-specific encrypted)
+    private static final String LICENSE_FILE = "/data/local/tmp/.hf_lic_cache";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
@@ -363,27 +363,16 @@ public class LicenseClient {
             // Encrypt
             String encrypted = encryptAES(data.toString());
 
-            // Try to write to temporary location first
-            java.io.File tempFile = new java.io.File(context.getCacheDir(), ".hf_lic_tmp");
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile);
+            // Write directly to /data/local/tmp/ (world-writable location)
+            java.io.File file = new java.io.File(LICENSE_FILE);
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
             fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
             fos.close();
 
-            // Use root to move to final location and set permissions
-            String[] commands = {
-                "cp " + tempFile.getAbsolutePath() + " " + LICENSE_FILE,
-                "chmod 644 " + LICENSE_FILE,
-                "chown root:root " + LICENSE_FILE
-            };
+            // Make file world-readable (chmod 644) using root
+            executeRootCommand("chmod 644 " + LICENSE_FILE);
 
-            for (String cmd : commands) {
-                executeRootCommand(cmd);
-            }
-
-            // Clean up temp file
-            tempFile.delete();
-
-            Log.i(TAG, "✅ License written to encrypted file (root)");
+            Log.i(TAG, "✅ License written to encrypted file (" + LICENSE_FILE + ")");
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to write license file: " + e.getMessage());
@@ -408,17 +397,33 @@ public class LicenseClient {
     }
 
     /**
-     * Read encrypted license from file (using root if needed)
+     * Read encrypted license from file (world-readable location)
      */
     public static LicenseData readLicenseFromFile() {
         try {
             Log.i("LicenseClient", "[READ] Reading license file: " + LICENSE_FILE);
 
-            // Try reading with root first (since file is in /data/adb/)
-            String encrypted = readFileWithRoot(LICENSE_FILE);
+            java.io.File file = new java.io.File(LICENSE_FILE);
+            if (!file.exists()) {
+                Log.e("LicenseClient", "[READ] License file does not exist");
+                return null;
+            }
 
-            if (encrypted == null || encrypted.isEmpty()) {
-                Log.e("LicenseClient", "[READ] Failed to read license file with root (empty or null)");
+            if (!file.canRead()) {
+                Log.e("LicenseClient", "[READ] License file is not readable");
+                return null;
+            }
+
+            // Read file directly (no root needed for /data/local/tmp/)
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            byte[] data = new byte[(int) file.length()];
+            fis.read(data);
+            fis.close();
+
+            String encrypted = new String(data, StandardCharsets.UTF_8);
+
+            if (encrypted.isEmpty()) {
+                Log.e("LicenseClient", "[READ] License file is empty");
                 return null;
             }
 
@@ -443,16 +448,18 @@ public class LicenseClient {
 
             Log.i("LicenseClient", "[READ] License parsed - token: " + token.substring(0, Math.min(20, token.length())) + "..., expires: " + expires);
 
-            LicenseData data = new LicenseData(token, expires, device);
+            LicenseData licenseData = new LicenseData(token, expires, device);
 
-            if (!data.isValid()) {
+            if (!licenseData.isValid()) {
                 Log.e("LicenseClient", "[READ] License data is INVALID (expired or empty token)");
                 if (expires > 0) {
                     Log.e("LicenseClient", "[READ] Expiration check - now: " + System.currentTimeMillis() + ", expires: " + expires);
                 }
+            } else {
+                Log.i("LicenseClient", "[READ] ✅ License data is VALID");
             }
 
-            return data;
+            return licenseData;
 
         } catch (Exception e) {
             Log.e("LicenseClient", "[READ] Exception reading license file: " + e.getMessage());
