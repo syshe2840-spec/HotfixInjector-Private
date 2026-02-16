@@ -99,23 +99,52 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                             // ⚡ SERVER VERIFICATION - Check license BEFORE injection!
                             XposedBridge.log(TAG + ": [LICENSE] 🔒 Verifying with server BEFORE injection...");
-                            try {
-                                LicenseClient licenseClient = new LicenseClient(app);
-                                LicenseClient.LicenseResult result = licenseClient.verify();
 
-                                if (!result.success) {
-                                    XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION FAILED: " + result.message);
-                                    XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - No valid license!");
-                                    return; // Don't inject if license invalid!
+                            // Use CountDownLatch to wait for background thread
+                            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+                            final boolean[] verificationSuccess = new boolean[1];
+                            final String[] errorMessage = new String[1];
+
+                            // Run verification in background thread (avoid NetworkOnMainThreadException)
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        LicenseClient licenseClient = new LicenseClient(app);
+                                        LicenseClient.LicenseResult result = licenseClient.verify();
+                                        verificationSuccess[0] = result.success;
+                                        errorMessage[0] = result.message;
+                                    } catch (Exception e) {
+                                        verificationSuccess[0] = false;
+                                        errorMessage[0] = "Exception: " + e.getMessage();
+                                    } finally {
+                                        latch.countDown();
+                                    }
                                 }
+                            }).start();
 
-                                XposedBridge.log(TAG + ": [LICENSE] ✅ Verification SUCCESS - proceeding with injection");
-                            } catch (Exception licEx) {
-                                XposedBridge.log(TAG + ": [LICENSE] ❌ Verification ERROR: " + licEx.getMessage());
-                                XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED due to error!");
-                                XposedBridge.log(licEx);
-                                return; // Don't inject if verification fails!
+                            // Wait for verification to complete (max 15 seconds)
+                            try {
+                                boolean completed = latch.await(15, java.util.concurrent.TimeUnit.SECONDS);
+                                if (!completed) {
+                                    XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION TIMEOUT (15s)");
+                                    XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - Verification timeout!");
+                                    return;
+                                }
+                            } catch (InterruptedException e) {
+                                XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION INTERRUPTED");
+                                XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED!");
+                                return;
                             }
+
+                            // Check verification result
+                            if (!verificationSuccess[0]) {
+                                XposedBridge.log(TAG + ": [LICENSE] ❌ VERIFICATION FAILED: " + errorMessage[0]);
+                                XposedBridge.log(TAG + ": [LICENSE] 🚫 INJECTION BLOCKED - No valid license!");
+                                return; // Don't inject if license invalid!
+                            }
+
+                            XposedBridge.log(TAG + ": [LICENSE] ✅ Verification SUCCESS - proceeding with injection");
 
                             // Get classloader
                             ClassLoader cl = app.getClassLoader();
