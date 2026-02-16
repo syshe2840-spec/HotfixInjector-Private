@@ -3,6 +3,7 @@ package com.example.hotfixinjector;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.Environment;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.Log;
@@ -36,8 +37,8 @@ public class LicenseClient {
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_EXPIRES_AT = "expires_at";
 
-    // Encrypted license file (in external storage, accessible by all apps, device-specific encrypted)
-    private static final String LICENSE_FILE = "/sdcard/.hf_lic_cache";
+    // License file name (will be in external storage)
+    private static final String LICENSE_FILENAME = ".hf_lic_cache";
 
     // Cloudflare Worker URL
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
@@ -236,7 +237,7 @@ public class LicenseClient {
 
             // Fallback to encrypted file
             if (sessionToken == null) {
-                Log.i(TAG, "[VERIFY] Trying to read from file: " + LICENSE_FILE);
+                Log.i(TAG, "[VERIFY] Trying to read from file...");
                 LicenseData license = readLicenseFromFile();
                 if (license != null) {
                     sessionToken = license.sessionToken;
@@ -345,7 +346,8 @@ public class LicenseClient {
 
         // Also clear encrypted file
         try {
-            java.io.File file = new java.io.File(LICENSE_FILE);
+            java.io.File externalStorage = Environment.getExternalStorageDirectory();
+            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
             if (file.exists()) {
                 file.delete();
                 Log.i(TAG, "🗑️ Encrypted license file deleted");
@@ -383,12 +385,20 @@ public class LicenseClient {
             String encrypted = encryptAES(data.toString());
 
             // Write to external storage (accessible by all apps, no root needed!)
-            java.io.File file = new java.io.File(LICENSE_FILE);
+            java.io.File externalStorage = Environment.getExternalStorageDirectory();
+            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
+
+            Log.i(TAG, "[WRITE] Writing to: " + file.getAbsolutePath());
+
             java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
             fos.write(encrypted.getBytes(StandardCharsets.UTF_8));
+            fos.flush();
             fos.close();
 
-            Log.i(TAG, "✅ License written to external storage: " + file.getAbsolutePath());
+            Log.i(TAG, "✅ License written successfully!");
+            Log.i(TAG, "✅ File path: " + file.getAbsolutePath());
+            Log.i(TAG, "✅ File size: " + file.length() + " bytes");
+            Log.i(TAG, "✅ File readable: " + file.canRead());
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Failed to write license file: " + e.getMessage());
@@ -417,11 +427,13 @@ public class LicenseClient {
      */
     public static LicenseData readLicenseFromFile() {
         try {
-            Log.i("LicenseClient", "[READ] Reading license file: " + LICENSE_FILE);
+            java.io.File externalStorage = Environment.getExternalStorageDirectory();
+            java.io.File file = new java.io.File(externalStorage, LICENSE_FILENAME);
 
-            java.io.File file = new java.io.File(LICENSE_FILE);
+            Log.i("LicenseClient", "[READ] Reading license from: " + file.getAbsolutePath());
+
             if (!file.exists()) {
-                Log.e("LicenseClient", "[READ] License file does not exist");
+                Log.e("LicenseClient", "[READ] ❌ License file does not exist at: " + file.getAbsolutePath());
                 return null;
             }
 
