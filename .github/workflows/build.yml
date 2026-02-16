@@ -1,0 +1,81 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build Release APK
+      run: ./gradlew assembleRelease
+
+    - name: Get APK path
+      id: apk-path
+      run: |
+        APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+        echo "path=$APK_PATH" >> $GITHUB_OUTPUT
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(date +%Y%m%d-%H%M%S)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: HotfixInjector-${{ steps.version.outputs.version }}
+        path: ${{ steps.apk-path.outputs.path }}
+        retention-days: 30
+
+    - name: Create Release
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: Release ${{ steps.version.outputs.version }}
+        body: |
+          ## 🔥 HotFix Injector - Protected Edition
+
+          ### Build Information
+          - **Build Date:** ${{ steps.version.outputs.version }}
+          - **Commit:** ${{ github.sha }}
+          - **Branch:** ${{ github.ref_name }}
+
+          ### Features
+          - ✅ Server-side license protection
+          - ✅ Device binding (max 2 devices)
+          - ✅ Real-time verification (every 10 seconds)
+          - ✅ Auto-crash on invalid license
+
+          ### Installation
+          1. Download APK
+          2. Install on Android device
+          3. Enable in LSPosed Manager
+          4. Reboot device
+          5. Activate license from app
+
+          ### API Server
+          - Worker URL: https://hotapp.lastofanarchy.workers.dev
+
+          ---
+          🤖 Built with GitHub Actions
+        files: ${{ steps.apk-path.outputs.path }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
