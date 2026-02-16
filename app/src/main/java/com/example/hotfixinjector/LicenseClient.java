@@ -193,8 +193,9 @@ public class LicenseClient {
                 String sessionToken = json.getString("session_token");
                 long expiresAt = json.optLong("expires_at", 0);
 
-                // Save credentials
+                // Save credentials (including license_key for future verification)
                 prefs.edit()
+                    .putString("license_key", licenseKey) // ⚡ NEW: Store license key
                     .putString(KEY_SESSION_TOKEN, sessionToken)
                     .putLong(KEY_EXPIRES_AT, expiresAt)
                     .apply();
@@ -376,12 +377,14 @@ public class LicenseClient {
                 return;
             }
 
-            // Create JSON with license data
+            // Create JSON with license data (NEW FORMAT with status and last_check)
             JSONObject data = new JSONObject();
+            data.put("license_key", prefs.getString("license_key", "")); // Store license key too
             data.put("token", sessionToken);
+            data.put("status", "valid"); // Initial status
+            data.put("last_check", System.currentTimeMillis()); // Current time
             data.put("expires", expiresAt);
             data.put("device", getDeviceId());
-            data.put("timestamp", System.currentTimeMillis());
 
             // Encrypt
             String encrypted = encryptAES(data.toString());
@@ -516,15 +519,22 @@ public class LicenseClient {
 
             Log.i("LicenseClient", "[READ] Decryption successful");
 
-            // Parse JSON
+            // Parse JSON (NEW FORMAT with status and last_check)
             JSONObject json = new JSONObject(decrypted);
+            String licenseKey = json.optString("license_key", "");
             String token = json.getString("token");
+            String status = json.optString("status", "valid"); // Default to valid for old format
+            long lastCheck = json.optLong("last_check", 0);
             long expires = json.getLong("expires");
             String device = json.getString("device");
 
-            Log.i("LicenseClient", "[READ] License parsed - token: " + token.substring(0, Math.min(20, token.length())) + "..., expires: " + expires);
+            Log.i("LicenseClient", "[READ] License parsed:");
+            Log.i("LicenseClient", "[READ]   - token: " + token.substring(0, Math.min(20, token.length())) + "...");
+            Log.i("LicenseClient", "[READ]   - status: " + status);
+            Log.i("LicenseClient", "[READ]   - last_check: " + lastCheck);
+            Log.i("LicenseClient", "[READ]   - expires: " + expires);
 
-            LicenseData licenseData = new LicenseData(token, expires, device);
+            LicenseData licenseData = new LicenseData(licenseKey, token, status, lastCheck, expires, device);
 
             if (!licenseData.isValid()) {
                 Log.e("LicenseClient", "[READ] License data is INVALID (expired or empty token)");
@@ -624,24 +634,73 @@ public class LicenseClient {
      * License data holder
      */
     public static class LicenseData {
-        public final String sessionToken;
+        public final String licenseKey;        // License key (not session token!)
+        public final String sessionToken;      // Session token from server
+        public final String status;            // "valid" | "invalid" | "burned"
+        public final long lastCheck;           // Last online verification timestamp
         public final long expiresAt;
         public final String deviceId;
 
-        public LicenseData(String sessionToken, long expiresAt, String deviceId) {
+        public LicenseData(String licenseKey, String sessionToken, String status, long lastCheck, long expiresAt, String deviceId) {
+            this.licenseKey = licenseKey;
             this.sessionToken = sessionToken;
+            this.status = status;
+            this.lastCheck = lastCheck;
+            this.expiresAt = expiresAt;
+            this.deviceId = deviceId;
+        }
+
+        // Legacy constructor for backward compatibility
+        public LicenseData(String sessionToken, long expiresAt, String deviceId) {
+            this.licenseKey = null;
+            this.sessionToken = sessionToken;
+            this.status = "valid";
+            this.lastCheck = System.currentTimeMillis();
             this.expiresAt = expiresAt;
             this.deviceId = deviceId;
         }
 
         public boolean isValid() {
+            // Check if burned
+            if ("burned".equals(status)) {
+                return false;
+            }
+            // Check if invalid
+            if ("invalid".equals(status)) {
+                return false;
+            }
+            // Check session token
             if (sessionToken == null || sessionToken.isEmpty()) {
                 return false;
             }
+            // Check expiration
             if (expiresAt > 0 && System.currentTimeMillis() > expiresAt) {
                 return false;
             }
             return true;
+        }
+
+        /**
+         * Check if license needs online verification (last check > 5 minutes ago)
+         */
+        public boolean needsOnlineCheck() {
+            long now = System.currentTimeMillis();
+            long fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+            return (now - lastCheck) > fiveMinutes;
+        }
+
+        /**
+         * Check if status is burned
+         */
+        public boolean isBurned() {
+            return "burned".equals(status);
+        }
+
+        /**
+         * Check if cache is fresh (< 5 minutes old)
+         */
+        public boolean isCacheFresh() {
+            return !needsOnlineCheck();
         }
     }
 
