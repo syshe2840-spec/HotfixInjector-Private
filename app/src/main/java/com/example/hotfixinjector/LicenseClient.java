@@ -218,68 +218,93 @@ public class LicenseClient {
     }
 
     /**
-     * Verify license with server (called on app launch + every 5 minutes)
+     * Verify license with CACHE-FIRST approach (called on app launch + every 5 minutes)
+     *
+     * Logic:
+     * 1. Read license file
+     * 2. Check if burned → delete file, fail
+     * 3. Check if cache fresh (< 5 min) → use cached status (fast!)
+     * 4. If cache stale (> 5 min) → online verification → update file
      */
     public LicenseResult verify() {
         try {
-            Log.i(TAG, "[VERIFY] Starting license verification...");
-            String sessionToken = null;
-            String deviceId = getDeviceId();
+            Log.i(TAG, "[VERIFY] ========================================");
+            Log.i(TAG, "[VERIFY] Starting CACHE-FIRST verification...");
 
-            // Try to read from prefs first
-            if (prefs != null) {
-                sessionToken = prefs.getString(KEY_SESSION_TOKEN, null);
-                if (sessionToken != null) {
-                    Log.i(TAG, "[VERIFY] ✅ Session token found in prefs");
-                } else {
-                    Log.w(TAG, "[VERIFY] ⚠️ No session token in prefs");
-                }
-            } else {
-                Log.w(TAG, "[VERIFY] ⚠️ Prefs is null");
-            }
+            // 1. Read license from file
+            LicenseData license = readLicenseFromFile();
 
-            // Fallback to encrypted file
-            if (sessionToken == null) {
-                Log.i(TAG, "[VERIFY] Trying to read from file...");
-                LicenseData license = readLicenseFromFile();
-                if (license != null) {
-                    sessionToken = license.sessionToken;
-                    deviceId = license.deviceId;
-                    Log.i(TAG, "[VERIFY] ✅ License loaded from file");
-                } else {
-                    Log.e(TAG, "[VERIFY] ❌ Failed to read license from file");
-                }
-            }
-
-            if (sessionToken == null) {
-                Log.e(TAG, "[VERIFY] ❌ No session token available");
+            if (license == null) {
+                Log.e(TAG, "[VERIFY] ❌ No license file found");
                 return LicenseResult.failure("No active license");
             }
 
-            Log.i(TAG, "[VERIFY] Sending request to server...");
+            // 2. Check if BURNED
+            if (license.isBurned()) {
+                Log.e(TAG, "[VERIFY] 🔥 LICENSE IS BURNED!");
+                Log.e(TAG, "[VERIFY] Deleting burned license file...");
+                clearLicense();
+                return LicenseResult.failure("License burned");
+            }
+
+            // 3. Check if cache is FRESH (< 5 minutes old)
+            if (license.isCacheFresh()) {
+                long age = (System.currentTimeMillis() - license.lastCheck) / 1000;
+                Log.i(TAG, "[VERIFY] ✅ Cache is FRESH (" + age + "s old)");
+                Log.i(TAG, "[VERIFY] Using cached status: " + license.status);
+
+                if ("valid".equals(license.status)) {
+                    return LicenseResult.success("Valid (cached)");
+                } else {
+                    return LicenseResult.failure("Invalid (cached)");
+                }
+            }
+
+            // 4. Cache is STALE → Online verification
+            Log.i(TAG, "[VERIFY] ⚠️ Cache is STALE (> 5 minutes old)");
+            Log.i(TAG, "[VERIFY] Performing ONLINE verification...");
 
             JSONObject payload = new JSONObject();
-            payload.put("session_token", sessionToken);
-            payload.put("device_id", deviceId);
+            payload.put("session_token", license.sessionToken);
+            payload.put("device_id", license.deviceId);
 
             String response = sendRequest("/verify", payload);
             JSONObject json = new JSONObject(response);
 
+            String newStatus = "invalid";
             if (json.getBoolean("success") && json.optBoolean("valid", false)) {
-                Log.d(TAG, "✅ License verified");
-                return LicenseResult.success("Valid");
+                newStatus = "valid";
+                Log.i(TAG, "[VERIFY] ✅ Online verification SUCCESS");
             } else {
-                String error = json.optString("error", "Invalid license");
-                Log.e(TAG, "❌ Verification failed: " + error);
+                String error = json.optString("error", "");
+                // Check if server says it's burned
+                if (error.contains("burned") || error.contains("revoked")) {
+                    newStatus = "burned";
+                    Log.e(TAG, "[VERIFY] 🔥 Server says license is BURNED!");
+                } else {
+                    Log.e(TAG, "[VERIFY] ❌ Online verification FAILED: " + error);
+                }
+            }
+
+            // Update file with new status and timestamp
+            updateLicenseStatus(newStatus);
+
+            // If burned, delete file
+            if ("burned".equals(newStatus)) {
                 clearLicense();
-                return LicenseResult.failure(error);
+                return LicenseResult.failure("License burned");
+            }
+
+            if ("valid".equals(newStatus)) {
+                return LicenseResult.success("Valid (online)");
+            } else {
+                return LicenseResult.failure("Invalid");
             }
 
         } catch (Exception e) {
-            Log.e(TAG, "❌❌❌ VERIFICATION EXCEPTION ❌❌❌");
-            Log.e(TAG, "❌ Exception type: " + e.getClass().getName());
-            Log.e(TAG, "❌ Exception message: " + e.getMessage());
-            Log.e(TAG, "❌ Stack trace:");
+            Log.e(TAG, "[VERIFY] ❌❌❌ VERIFICATION EXCEPTION ❌❌❌");
+            Log.e(TAG, "[VERIFY] Exception type: " + e.getClass().getName());
+            Log.e(TAG, "[VERIFY] Exception message: " + e.getMessage());
             e.printStackTrace();
             return LicenseResult.failure("Network error: " + e.getMessage());
         }
@@ -318,6 +343,43 @@ public class LicenseClient {
         } catch (Exception e) {
             Log.e(TAG, "❌ Verification exception (with data): " + e.getMessage());
             return LicenseResult.failure("Network error");
+        }
+    }
+
+    /**
+     * Update license status in file (after online verification)
+     */
+    private void updateLicenseStatus(String newStatus) {
+        try {
+            Log.i(TAG, "[UPDATE] Updating license status to: " + newStatus);
+
+            // Read current file
+            LicenseData oldLicense = readLicenseFromFile();
+            if (oldLicense == null) {
+                Log.e(TAG, "[UPDATE] ❌ Cannot update - no license file");
+                return;
+            }
+
+            // Create updated JSON
+            JSONObject data = new JSONObject();
+            data.put("license_key", oldLicense.licenseKey);
+            data.put("token", oldLicense.sessionToken);
+            data.put("status", newStatus); // ⚡ NEW STATUS
+            data.put("last_check", System.currentTimeMillis()); // ⚡ UPDATE TIMESTAMP
+            data.put("expires", oldLicense.expiresAt);
+            data.put("device", oldLicense.deviceId);
+
+            // Encrypt and write
+            String encrypted = encryptAES(data.toString());
+
+            // Write to ROOT directory
+            writeLicenseToRootFile(encrypted);
+
+            Log.i(TAG, "[UPDATE] ✅ License status updated successfully");
+
+        } catch (Exception e) {
+            Log.e(TAG, "[UPDATE] ❌ Failed to update license status: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
