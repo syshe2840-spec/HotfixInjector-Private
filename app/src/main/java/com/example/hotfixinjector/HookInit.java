@@ -77,6 +77,22 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                             XposedBridge.log(TAG + ": [CHECK] Checking package: " + pkg);
 
+                            // Simple license check (SharedPreferences only - no network!)
+                            try {
+                                android.content.SharedPreferences prefs = app.getSharedPreferences("license_prefs", android.content.Context.MODE_PRIVATE);
+                                String sessionToken = prefs.getString("session_token", null);
+
+                                if (sessionToken == null || sessionToken.isEmpty()) {
+                                    XposedBridge.log(TAG + ": ❌ [LICENSE] No active license - INJECTION BLOCKED");
+                                    return;
+                                }
+
+                                XposedBridge.log(TAG + ": ✅ [LICENSE] Local license found - proceeding with injection");
+                            } catch (Exception licEx) {
+                                XposedBridge.log(TAG + ": ⚠️ [LICENSE] License check failed, but proceeding anyway: " + licEx.getMessage());
+                                // Continue anyway to avoid breaking injection
+                            }
+
                             // Check hotfix folder
                             String hotfixPath = "/data/data/" + pkg + "/" + HOTFIX_FOLDER;
                             XposedBridge.log(TAG + ": [CHECK] Hotfix path: " + hotfixPath);
@@ -229,6 +245,17 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
             injectDexElements(classLoader, dexFiles, hotfixDir);
 
             XposedBridge.log(TAG + ": ✅ INJECTION COMPLETED!");
+
+            // Start License Guard for 5-second verification
+            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (5-second verification)...");
+            try {
+                LicenseGuard guard = LicenseGuard.getInstance(app);
+                guard.startGuard(app);
+                XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started successfully");
+            } catch (Exception guardEx) {
+                XposedBridge.log(TAG + ": ❌ [GUARD] Failed to start guard: " + guardEx.getMessage());
+            }
+
             XposedBridge.log(TAG + ": ========================================");
 
         } catch (Exception e) {
