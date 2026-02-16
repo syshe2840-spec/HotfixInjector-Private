@@ -454,26 +454,43 @@ public class LicenseClient {
      */
     public static LicenseData readLicenseFromFile() {
         try {
-            Log.i("LicenseClient", "[READ] Reading license from ROOT: " + LICENSE_FILE);
+            Log.i("LicenseClient", "[READ] ========================================");
+            Log.i("LicenseClient", "[READ] Starting file read from: " + LICENSE_FILE);
 
             // Read directly WITHOUT su (file has 666 permissions)
             java.io.File file = new java.io.File(LICENSE_FILE);
+            Log.i("LicenseClient", "[READ] File object created");
 
-            if (!file.exists()) {
-                Log.e("LicenseClient", "[READ] ❌ License file doesn't exist");
+            Log.i("LicenseClient", "[READ] Checking if file exists...");
+            boolean exists = file.exists();
+            Log.i("LicenseClient", "[READ] File exists: " + exists);
+
+            if (!exists) {
+                Log.e("LicenseClient", "[READ] ❌ FAILED - File doesn't exist!");
                 return null;
             }
 
-            if (!file.canRead()) {
-                Log.e("LicenseClient", "[READ] ❌ License file is not readable (permissions issue)");
+            Log.i("LicenseClient", "[READ] Checking if file is readable...");
+            boolean canRead = file.canRead();
+            Log.i("LicenseClient", "[READ] File canRead: " + canRead);
+            Log.i("LicenseClient", "[READ] File path: " + file.getAbsolutePath());
+            Log.i("LicenseClient", "[READ] File length: " + file.length());
+
+            if (!canRead) {
+                Log.e("LicenseClient", "[READ] ❌ FAILED - File is not readable!");
+                Log.e("LicenseClient", "[READ] This might be SELinux or permission issue");
                 return null;
             }
 
-            // Read file directly
+            Log.i("LicenseClient", "[READ] Opening FileInputStream...");
             java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            Log.i("LicenseClient", "[READ] FileInputStream opened successfully");
+
+            Log.i("LicenseClient", "[READ] Reading file data...");
             byte[] data = new byte[(int) file.length()];
-            fis.read(data);
+            int bytesRead = fis.read(data);
             fis.close();
+            Log.i("LicenseClient", "[READ] Bytes read: " + bytesRead);
 
             String encrypted = new String(data, StandardCharsets.UTF_8);
 
@@ -517,8 +534,19 @@ public class LicenseClient {
             return licenseData;
 
         } catch (Exception e) {
-            Log.e("LicenseClient", "[READ] Exception reading license file: " + e.getMessage());
+            Log.e("LicenseClient", "[READ] ❌❌❌ EXCEPTION CAUGHT ❌❌❌");
+            Log.e("LicenseClient", "[READ] Exception type: " + e.getClass().getName());
+            Log.e("LicenseClient", "[READ] Exception message: " + e.getMessage());
+            Log.e("LicenseClient", "[READ] Stack trace:");
             e.printStackTrace();
+
+            // Also print to XposedBridge log if available
+            try {
+                Class<?> xposedBridge = Class.forName("de.robv.android.xposed.XposedBridge");
+                java.lang.reflect.Method log = xposedBridge.getMethod("log", String.class);
+                log.invoke(null, "[READ] ❌ Exception: " + e.getClass().getName() + ": " + e.getMessage());
+            } catch (Exception ignored) {}
+
             return null;
         }
     }
