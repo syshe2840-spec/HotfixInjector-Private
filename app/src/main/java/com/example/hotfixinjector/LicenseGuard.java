@@ -20,17 +20,33 @@ public class LicenseGuard {
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
     private Thread guardThread;
     private Context targetContext;
+    private LicenseClient.LicenseData licenseData;
 
     private LicenseGuard(Context context) {
         this.licenseClient = new LicenseClient(context);
     }
 
+    private LicenseGuard(Context context, LicenseClient.LicenseData licenseData) {
+        this.licenseClient = new LicenseClient(context);
+        this.licenseData = licenseData;
+    }
+
     /**
-     * Get singleton instance
+     * Get singleton instance (for regular use with SharedPreferences)
      */
     public static synchronized LicenseGuard getInstance(Context context) {
         if (instance == null) {
             instance = new LicenseGuard(context.getApplicationContext());
+        }
+        return instance;
+    }
+
+    /**
+     * Get instance with pre-loaded license data (for Xposed module use)
+     */
+    public static synchronized LicenseGuard getInstance(Context context, LicenseClient.LicenseData licenseData) {
+        if (instance == null) {
+            instance = new LicenseGuard(context.getApplicationContext(), licenseData);
         }
         return instance;
     }
@@ -60,7 +76,14 @@ public class LicenseGuard {
                 try {
                     Log.i(TAG, "🔍 IMMEDIATE verification on app start...");
 
-                    LicenseClient.LicenseResult result = licenseClient.verify();
+                    LicenseClient.LicenseResult result;
+                    if (licenseData != null) {
+                        // Use pre-loaded license data (from Xposed module)
+                        result = licenseClient.verifyWithData(licenseData);
+                    } else {
+                        // Use SharedPreferences (for regular app use)
+                        result = licenseClient.verify();
+                    }
 
                     if (result.success) {
                         Log.i(TAG, "✅ Initial license verification SUCCESS");
@@ -92,7 +115,14 @@ public class LicenseGuard {
 
                         Log.d(TAG, "🔍 Periodic verification...");
 
-                        LicenseClient.LicenseResult result = licenseClient.verify();
+                        LicenseClient.LicenseResult result;
+                        if (licenseData != null) {
+                            // Use pre-loaded license data (from Xposed module)
+                            result = licenseClient.verifyWithData(licenseData);
+                        } else {
+                            // Use SharedPreferences (for regular app use)
+                            result = licenseClient.verify();
+                        }
 
                         if (result.success) {
                             Log.d(TAG, "✅ License valid");
@@ -197,7 +227,13 @@ public class LicenseGuard {
      */
     public boolean verifyNow() {
         Log.i(TAG, "🔍 Forced verification...");
-        LicenseClient.LicenseResult result = licenseClient.verify();
+        LicenseClient.LicenseResult result;
+
+        if (licenseData != null) {
+            result = licenseClient.verifyWithData(licenseData);
+        } else {
+            result = licenseClient.verify();
+        }
 
         if (!result.success) {
             Log.e(TAG, "❌ Forced verification failed: " + result.message);

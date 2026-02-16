@@ -230,11 +230,26 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
             XposedBridge.log(TAG + ": ✅ INJECTION COMPLETED!");
 
-            // Start License Guard for 5-second verification
+            // Read license with root (module has privilege)
+            XposedBridge.log(TAG + ": [LICENSE] Reading license file with root...");
+            LicenseClient.LicenseData licenseData = null;
+            try {
+                licenseData = LicenseClient.readLicenseFromFile();
+                if (licenseData != null && licenseData.isValid()) {
+                    XposedBridge.log(TAG + ": ✅ [LICENSE] License data loaded successfully");
+                    XposedBridge.log(TAG + ": [LICENSE] Device: " + licenseData.deviceId.substring(0, Math.min(16, licenseData.deviceId.length())) + "...");
+                } else {
+                    XposedBridge.log(TAG + ": ⚠️ [LICENSE] No valid license found - guard will crash app");
+                }
+            } catch (Exception licEx) {
+                XposedBridge.log(TAG + ": ⚠️ [LICENSE] Failed to read license: " + licEx.getMessage());
+                XposedBridge.log(licEx);
+            }
+
+            // Start License Guard with pre-loaded license data
             XposedBridge.log(TAG + ": [GUARD] Starting License Guard (5-second verification)...");
             try {
-                // LicenseClient uses encrypted file now, so any context works
-                LicenseGuard guard = LicenseGuard.getInstance(app);
+                LicenseGuard guard = LicenseGuard.getInstance(app, licenseData);
                 guard.startGuard(app);
                 XposedBridge.log(TAG + ": ✅ [GUARD] License Guard started successfully");
             } catch (Exception guardEx) {

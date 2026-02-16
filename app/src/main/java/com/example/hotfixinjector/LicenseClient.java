@@ -259,6 +259,42 @@ public class LicenseClient {
     }
 
     /**
+     * Verify license with server using pre-loaded license data (for Xposed module use)
+     */
+    public LicenseResult verifyWithData(LicenseData licenseData) {
+        try {
+            if (licenseData == null || licenseData.sessionToken == null) {
+                return LicenseResult.failure("No license data provided");
+            }
+
+            // Check expiration (offline check first)
+            if (!licenseData.isValid()) {
+                return LicenseResult.failure("License expired");
+            }
+
+            JSONObject payload = new JSONObject();
+            payload.put("session_token", licenseData.sessionToken);
+            payload.put("device_id", licenseData.deviceId);
+
+            String response = sendRequest("/verify", payload);
+            JSONObject json = new JSONObject(response);
+
+            if (json.getBoolean("success") && json.optBoolean("valid", false)) {
+                Log.d(TAG, "✅ License verified (with data)");
+                return LicenseResult.success("Valid");
+            } else {
+                String error = json.optString("error", "Invalid license");
+                Log.e(TAG, "❌ Verification failed (with data): " + error);
+                return LicenseResult.failure(error);
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Verification exception (with data): " + e.getMessage());
+            return LicenseResult.failure("Network error");
+        }
+    }
+
+    /**
      * Check if license is activated and not expired (offline check)
      */
     public boolean isLicenseActive() {
