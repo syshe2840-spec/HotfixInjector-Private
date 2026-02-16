@@ -40,8 +40,8 @@ public class LicenseClient {
     private static final String API_BASE_URL = "https://hotapp.lastofanarchy.workers.dev";
 
     // AES-256 Encryption Key (32 bytes)
-    // ⚠️ CHANGE THIS - Should match server or use asymmetric encryption
-    private static final String ENCRYPTION_KEY = "YOUR_32_CHAR_ENCRYPTION_KEY_HERE!!"; // Must be 32 chars
+    // ⚠️ This MUST match the ENCRYPTION_KEY in worker.js
+    private static final String ENCRYPTION_KEY = "Kh7Gm2Qp5Rt8Wx4Zv1Nc9Bs6Yf3Dj0L"; // Must be 32 chars
 
     private final Context context;
     private final SharedPreferences prefs;
