@@ -44,7 +44,7 @@ public class LicenseClient {
 
     // AES-256 Encryption Key (32 bytes)
     // ⚠️ This MUST match the ENCRYPTION_KEY in worker.js
-    private static final String ENCRYPTION_KEY = "Kh7Gm2Qp5Rt8Wx4Zv1Nc9Bs6Yf3Dj0"; // Must be 32 chars (exactly!)
+    private static final String ENCRYPTION_KEY = "Kh7Gm2Qp5Rt8Wx4Zv1Nc9Bs6Yf3Dj0A"; // 32 bytes exactly
 
     private final Context context;
     private final SharedPreferences prefs;
