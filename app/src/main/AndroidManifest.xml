@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
+    <!-- AlarmManager permissions for periodic license verification -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
@@ -28,6 +32,16 @@
             android:name=".BackgroundLicenseService"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- Boot Receiver - Restart service after device boot -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".MainActivity"
