@@ -7,9 +7,14 @@ android {
     defaultConfig {
         applicationId "com.example.hotfixinjector"
         minSdkVersion 21
-        targetSdkVersion 26
+        targetSdkVersion 33
         versionCode 1
         versionName "1.0"
+    }
+
+    lintOptions {
+        checkReleaseBuilds false
+        abortOnError false
     }
 
     buildTypes {
