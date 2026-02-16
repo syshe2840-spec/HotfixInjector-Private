@@ -87,18 +87,8 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
                                 return;
                             }
 
-                            // Verify with server
-                            XposedBridge.log(TAG + ": [LICENSE] Verifying with server...");
-                            LicenseClient.LicenseResult verifyResult = licenseClient.verify();
-
-                            if (!verifyResult.success) {
-                                XposedBridge.log(TAG + ": ❌ [LICENSE] Server verification failed: " + verifyResult.message);
-                                XposedBridge.log(TAG + ": ❌ [LICENSE] INJECTION BLOCKED");
-                                licenseClient.clearLicense();
-                                return;
-                            }
-
-                            XposedBridge.log(TAG + ": ✅ [LICENSE] License verified successfully");
+                            XposedBridge.log(TAG + ": ✅ [LICENSE] License active (local check passed)");
+                            XposedBridge.log(TAG + ": ℹ️ [LICENSE] Server verification will be done by LicenseGuard");
                             // ==================== LICENSE CHECK END ====================
 
                             // Check hotfix folder
@@ -255,7 +245,7 @@ public class HookInit implements IXposedHookLoadPackage, IXposedHookZygoteInit {
             XposedBridge.log(TAG + ": ✅ INJECTION COMPLETED!");
 
             // ==================== START LICENSE GUARD ====================
-            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (10-second verification)...");
+            XposedBridge.log(TAG + ": [GUARD] Starting License Guard (5-second verification)...");
             try {
                 LicenseGuard guard = LicenseGuard.getInstance(app);
                 guard.startGuard(app);
